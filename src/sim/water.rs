@@ -111,6 +111,7 @@ pub fn step_water(
 /// reactive drought-forecast readout.
 ///
 /// [`AsyncComputeTaskPool`]: bevy::tasks::AsyncComputeTaskPool
+#[allow(clippy::too_many_arguments)]
 pub fn forecast_drought_retention(
     ground: Vec<i32>,
     dam: Vec<bool>,
@@ -118,13 +119,14 @@ pub fn forecast_drought_retention(
     mut water: Vec<f32>,
     width: u32,
     height: u32,
+    drought_secs: f32,
 ) -> f32 {
     let before: f32 = water.iter().sum();
     if before < 1.0 {
         return 0.0;
     }
     let dt = 1.0 / 16.0;
-    let steps = (super::DROUGHT_LENGTH / dt) as usize;
+    let steps = (drought_secs / dt) as usize;
     for _ in 0..steps {
         step_water(
             &ground,
@@ -238,11 +240,18 @@ mod tests {
         drain[(w + w - 1) as usize] = true;
 
         let no_dam = vec![false; n];
-        let without =
-            forecast_drought_retention(ground.clone(), no_dam, drain.clone(), water.clone(), w, h);
+        let without = forecast_drought_retention(
+            ground.clone(),
+            no_dam,
+            drain.clone(),
+            water.clone(),
+            w,
+            h,
+            30.0,
+        );
         let mut dam = vec![false; n];
         dam[(w + w - 3) as usize] = true; // dam in the channel, before the drain
-        let with = forecast_drought_retention(ground, dam, drain, water, w, h);
+        let with = forecast_drought_retention(ground, dam, drain, water, w, h, 30.0);
         assert!(
             with > without + 0.05,
             "dam must retain noticeably more water: {without:.3} -> {with:.3}"

@@ -30,7 +30,7 @@ pub const BUILDING_DEFS: &[BuildingDef] = &[
     BuildingDef {
         kind: BuildingKind::Lodge,
         name: "Lodge",
-        description: "Houses 5 beavers. New beavers arrive while food and water last.",
+        description: "Houses 5 beavers. Births cost 3 food and 3 water.",
         cost_logs: 20.0,
         build_work: 10.0,
         radius: 0,
@@ -102,6 +102,19 @@ pub struct UnderConstruction {
     pub required: f32,
 }
 
+/// Lodge breeding state — its own component so the production system's
+/// `WorkCycle` cooldown can't stomp the nest timer (they used to share it).
+#[derive(Component)]
+pub struct Nest {
+    pub cooldown: f32,
+}
+
+impl Default for Nest {
+    fn default() -> Self {
+        Self { cooldown: 12.0 }
+    }
+}
+
 /// Periodic production state for active buildings.
 #[derive(Component, Default)]
 pub struct WorkCycle {
@@ -161,16 +174,18 @@ pub fn place_building(
 ) -> Entity {
     let d = def(kind);
     stockpile.logs -= d.cost_logs;
-    let entity = commands
-        .spawn((
-            Building { kind, tile },
-            UnderConstruction {
-                done: 0.0,
-                required: d.build_work,
-            },
-            WorkCycle::default(),
-        ))
-        .id();
+    let mut spawned = commands.spawn((
+        Building { kind, tile },
+        UnderConstruction {
+            done: 0.0,
+            required: d.build_work,
+        },
+        WorkCycle::default(),
+    ));
+    if kind == BuildingKind::Lodge {
+        spawned.insert(Nest::default());
+    }
+    let entity = spawned.id();
     let i = map.idx(tile.x, tile.y);
     map.building[i] = Some(entity);
     if kind == BuildingKind::Dam {
@@ -285,28 +300,39 @@ fn find_plant_spot(map: &Map, center: UVec2, radius: u32) -> Option<UVec2> {
     tiles_in_radius(map, center, radius).find(|t| map.is_free_land(t.x, t.y))
 }
 
-/// Lodges attract new beavers while there is housing, food and water.
+/// Lodges raise new beavers — growth is *paid for*: each birth consumes
+/// food and water, so the colony only grows while production keeps up.
+pub const BIRTH_FOOD: f32 = 3.0;
+pub const BIRTH_WATER: f32 = 3.0;
+
+#[allow(clippy::too_many_arguments)]
 fn lodge_spawning(
     mut commands: Commands,
     time: Res<Time>,
     map: Res<Map>,
     population: Res<Population>,
-    stockpile: Res<Stockpile>,
-    mut lodges: Query<(&Building, &mut WorkCycle), Without<UnderConstruction>>,
+    mut stockpile: ResMut<Stockpile>,
+    mut notice: ResMut<crate::interact::Notice>,
+    real_time: Res<Time<Real>>,
+    mut lodges: Query<(&Building, &mut Nest), Without<UnderConstruction>>,
 ) {
     let dt = time.delta_secs();
-    for (building, mut cycle) in &mut lodges {
-        if building.kind != BuildingKind::Lodge {
+    for (building, mut nest) in &mut lodges {
+        nest.cooldown -= dt;
+        if nest.cooldown > 0.0 {
             continue;
         }
-        cycle.cooldown -= dt;
-        if cycle.cooldown > 0.0 {
-            continue;
-        }
-        cycle.cooldown = 25.0;
-        if population.count < population.cap && stockpile.food >= 3.0 && stockpile.water >= 3.0 {
+        nest.cooldown = 20.0;
+        if population.count < population.cap
+            && stockpile.food >= BIRTH_FOOD + 1.0
+            && stockpile.water >= BIRTH_WATER + 1.0
+        {
+            stockpile.food -= BIRTH_FOOD;
+            stockpile.water -= BIRTH_WATER;
             let pos = map.tile_center(building.tile.x, building.tile.y);
             super::beavers::spawn_beaver(&mut commands, pos);
+            notice.message = Some("A new beaver was born".into());
+            notice.expires = real_time.elapsed_secs() + 2.0;
         }
     }
 }

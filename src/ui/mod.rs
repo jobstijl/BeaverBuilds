@@ -120,7 +120,7 @@ fn top_bar() -> impl bevy::scene::Scene {
                     let s = world.resource::<Season>();
                     let seconds = s.remaining.max(0.0).ceil() as u32;
                     let text = if s.drought {
-                        format!("Day {}  ·  DROUGHT  {seconds}s left", s.day)
+                        format!("Day {}  ·  DROUGHT #{}  {seconds}s left", s.day, s.cycle)
                     } else {
                         format!("Day {}  ·  Wet season  {seconds}s", s.day)
                     };
@@ -149,8 +149,17 @@ fn top_bar() -> impl bevy::scene::Scene {
                         let (ground, dam) = (map.ground.clone(), map.dam.clone());
                         let (drain, water) = (map.drain.clone(), map.water.clone());
                         let (width, height) = (map.width, map.height);
+                        let drought_secs = world.resource::<Season>().next_drought_length();
                         async move {
-                            forecast_drought_retention(ground, dam, drain, water, width, height)
+                            forecast_drought_retention(
+                                ground,
+                                dam,
+                                drain,
+                                water,
+                                width,
+                                height,
+                                drought_secs,
+                            )
                         }
                     },
                     |_: &World, _: Entity, value: &AsyncValue<f32>| {

@@ -28,8 +28,11 @@ impl Plugin for IntroPlugin {
             .add_systems(Startup, (spawn_overlay, intro_speed))
             .add_systems(
                 Update,
-                (govern, cinematic_camera, pulse_prompt, start_on_input)
-                    .run_if(in_state(AppState::Intro)),
+                (govern, cinematic_camera, start_on_input).run_if(in_state(AppState::Intro)),
+            )
+            .add_systems(
+                Update,
+                pulse_prompt.run_if(not(in_state(AppState::Playing))),
             )
             .add_systems(
                 OnEnter(AppState::Playing),
@@ -41,7 +44,74 @@ impl Plugin for IntroPlugin {
                     crate::sim::beavers::initial_colony,
                 )
                     .chain(),
+            )
+            .add_systems(OnEnter(AppState::GameOver), spawn_epitaph)
+            .add_systems(
+                Update,
+                restart_on_input.run_if(in_state(AppState::GameOver)),
             );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Game over: the epitaph, and the road back
+// ---------------------------------------------------------------------------
+
+fn spawn_epitaph(mut commands: Commands, season: Res<Season>, stats: Res<crate::sim::ColonyStats>) {
+    let line = format!(
+        "The colony fell on day {} — {} beavers at its height, {} droughts endured",
+        season.day,
+        stats.peak,
+        season.cycle.saturating_sub(u32::from(!season.drought))
+    );
+    commands
+        .spawn_scene(bsn! {
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(0),
+                left: px(0),
+                right: px(0),
+                bottom: px(0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                row_gap: px(12),
+            }
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55))
+            Children [
+                (
+                    Text("THE COLONY FELL")
+                    TextFont { font_size: px(52) }
+                    TextColor(Color::srgb(1.0, 0.45, 0.35))
+                    TextShadow
+                ),
+                (
+                    Text({ line })
+                    TextFont { font_size: px(16) }
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8))
+                ),
+                (
+                    template_value(Prompt)
+                    Text("click to found a new colony")
+                    TextFont { font_size: px(18) }
+                    TextColor(Color::srgb(1.0, 0.92, 0.75))
+                ),
+            ]
+        })
+        .insert(IntroOverlay);
+}
+
+fn restart_on_input(
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut next: ResMut<NextState<AppState>>,
+) {
+    if mouse.just_pressed(MouseButton::Left)
+        || keys.just_pressed(KeyCode::Space)
+        || keys.just_pressed(KeyCode::Enter)
+    {
+        info!(target: "player", "restart after game over");
+        next.set(AppState::Playing);
     }
 }
 
@@ -118,15 +188,16 @@ fn reset_world(world: &mut World) {
     });
     world.insert_resource(Season::default());
     world.insert_resource(Population::default());
+    world.insert_resource(crate::sim::ColonyStats::default());
     world.resource_mut::<Chronicle>().0.clear();
     world.resource_mut::<Selected>().0 = None;
     world.resource_mut::<Hover>().0 = None;
     *world.resource_mut::<Tool>() = Tool::Select;
     *world.resource_mut::<CameraRig>() = CameraRig::default();
+    let mut time = world.resource_mut::<Time<Virtual>>();
+    time.unpause();
     if std::env::var("BB_FAST").is_err() {
-        world
-            .resource_mut::<Time<Virtual>>()
-            .set_relative_speed(1.0);
+        time.set_relative_speed(1.0);
     }
 }
 
@@ -216,9 +287,13 @@ fn govern(
         Some(BuildingKind::WaterPump)
     } else if count(BuildingKind::CarrotFarm) == 0 {
         Some(BuildingKind::CarrotFarm)
-    } else if stockpile.water < 10.0 && count(BuildingKind::WaterPump) < 4 {
+    } else if stockpile.water < 10.0
+        && count(BuildingKind::WaterPump) < 1 + population.count as usize / 4
+    {
         Some(BuildingKind::WaterPump)
-    } else if stockpile.food < 10.0 && count(BuildingKind::CarrotFarm) < 4 {
+    } else if stockpile.food < 10.0
+        && count(BuildingKind::CarrotFarm) < 1 + population.count as usize / 5
+    {
         Some(BuildingKind::CarrotFarm)
     } else if count(BuildingKind::Lumberjack) < 2 && stockpile.logs < 25.0 {
         Some(BuildingKind::Lumberjack)

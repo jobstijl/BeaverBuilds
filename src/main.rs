@@ -17,6 +17,8 @@ pub enum AppState {
     #[default]
     Intro,
     Playing,
+    /// The colony fell; shows the epitaph, click restarts on a fresh map.
+    GameOver,
 }
 
 /// `BB_FAST=1` starts the game at 4x speed (combinable with any mode).

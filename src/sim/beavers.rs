@@ -77,9 +77,9 @@ pub enum JobKind {
 }
 
 const WALK_SPEED: f32 = 2.6;
-const HUNGER_RATE: f32 = 1.0 / 50.0;
-const THIRST_RATE: f32 = 1.0 / 40.0;
-const STARVE_LIMIT: f32 = 80.0;
+const HUNGER_RATE: f32 = 1.0 / 35.0;
+const THIRST_RATE: f32 = 1.0 / 30.0;
+const STARVE_LIMIT: f32 = 45.0;
 
 pub struct BeaversPlugin;
 
@@ -364,7 +364,7 @@ fn work_jobs(
                 if let Some(wet) = wet {
                     let i = map.idx(wet.x, wet.y);
                     map.water[i] = (map.water[i] - 0.15).max(0.0);
-                    stockpile.water += 1.0;
+                    stockpile.water += 2.0;
                 }
             }
             JobKind::Farm(_) => {
@@ -386,6 +386,8 @@ fn needs(
     time: Res<Time>,
     mut stockpile: ResMut<Stockpile>,
     mut starving_count: ResMut<StarvingCount>,
+    mut notice: ResMut<crate::interact::Notice>,
+    real_time: Res<Time<Real>>,
     mut beavers: Query<(Entity, &mut Beaver)>,
 ) {
     let dt = time.delta_secs();
@@ -420,6 +422,8 @@ fn needs(
             if beaver.starving > STARVE_LIMIT {
                 commands.entity(entity).despawn();
                 starving_count.0 = starving_count.0.saturating_sub(1);
+                notice.message = Some("A beaver has starved".into());
+                notice.expires = real_time.elapsed_secs() + 2.5;
             }
         } else if beaver.starving > 0.0 {
             beaver.starving = 0.0;
