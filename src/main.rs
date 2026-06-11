@@ -1,4 +1,6 @@
 mod bench;
+mod bridge;
+mod chronicle;
 mod interact;
 mod render;
 mod sim;
@@ -23,6 +25,8 @@ fn main() {
         .add_plugins(MeshPickingPlugin)
         .add_plugins((
             bevy_reactive_bsn::ReactiveBsnPlugin,
+            bridge::BridgePlugin,
+            chronicle::ChroniclePlugin,
             sim::SimPlugin,
             render::RenderPlugin,
             interact::InteractPlugin,

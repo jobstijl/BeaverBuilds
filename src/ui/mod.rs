@@ -4,6 +4,7 @@ use bevy_reactive_bsn::{
     AsyncValue, Dep, keyed, reactive, reactive_async, reactive_list, reactive_rebuild,
 };
 
+use crate::chronicle::Chronicle;
 use crate::interact::{Selected, Tool};
 use crate::sim::beavers::StarvingCount;
 use crate::sim::buildings::{self, BUILDING_DEFS, Building, BuildingDef, UnderConstruction};
@@ -27,6 +28,7 @@ fn setup_ui(mut commands: Commands) {
     commands.spawn_scene(build_menu());
     commands.spawn_scene(info_panel());
     commands.spawn_scene(hints());
+    commands.spawn_scene(chronicle_panel());
 }
 
 const PANEL_BG: Color = Color::srgba(0.08, 0.1, 0.08, 0.88);
@@ -356,6 +358,28 @@ fn info_panel() -> impl bevy::scene::Scene {
                 }) as Box<dyn bevy::scene::Scene>
             },
         )
+    }
+}
+
+/// The scribe's daily entries (written by an async task through the
+/// world bridge), rendered reactively like any other resource.
+fn chronicle_panel() -> impl bevy::scene::Scene {
+    bsn! {
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(10),
+            bottom: px(86),
+        }
+        reactive([Dep::resource::<Chronicle>()], |world: &World, _: Entity| {
+            let chronicle = &world.resource::<Chronicle>().0;
+            let start = chronicle.len().saturating_sub(3);
+            let text = chronicle[start..].join("\n");
+            bsn! {
+                Text({ text })
+                TextFont { font_size: px(11) }
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.55))
+            }
+        })
     }
 }
 

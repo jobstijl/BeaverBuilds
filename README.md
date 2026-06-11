@@ -33,7 +33,10 @@ stocked, and grow the colony.
 - **Path** — cheap stone paths; beavers walk much faster on them.
 
 The world is rendered with distance fog and a two-light setup; droughts pull in a dusty
-haze, harden the sunlight and dry out the grass — all of it reactive state.
+haze, harden the sunlight and dry out the grass — all of it reactive state. A long-lived
+async "scribe" task writes a daily colony chronicle (bottom right) by bridging into the
+world at a post-reactive sync point — a working miniature of the composition story
+between Bevy's in-flight `bevy_async` bridge (PR #21744) and the reactive layer.
 
 Beavers are simple agents: they claim the nearest posted job (construction first),
 **pathfind to it on the async task pool** (A* that routes around water and trees and

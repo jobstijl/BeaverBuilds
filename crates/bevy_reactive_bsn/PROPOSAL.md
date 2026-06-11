@@ -310,14 +310,21 @@ path. We'd encourage upstream reactivity to stay pull-based.
   push) accelerate *pull*. When change indexes land, this layer's shared
   per-type scans can ride them directly: whole-world dependency checks drop
   from O(entities with `T`) to O(changed pages) with no API change here.
-- **`bevy_async` ([#21744], sync-point bridges) composes naturally.** The
-  reactor runner's position in the schedule is exactly the kind of sync
-  point async tasks would bridge into (e.g. await settled UI state).
-  Notably, the same author's experimental async BSN UI implements
-  `on_mutation` by *pumping `Changed<C>` scans at sync points* — convergent
-  evolution: everyone building reactivity on today's Bevy ends up
-  pull-based, which is an argument for standardizing the substrate (shared
-  scans, declared deps) rather than each layer re-rolling it.
+- **`bevy_async` ([#21744], sync-point bridges) composes naturally — now
+  demonstrated, not just asserted.** The validation game runs a minimal
+  stand-in for the bridge pattern (the real crate couldn't be used yet: it
+  pins Bevy 0.18 / tracks bevy main): a long-lived async "scribe" task
+  bridges in at a sync point placed *after* the reactor runner, reads the
+  **settled** post-reactive state of the frame — including an async-derived
+  `AsyncValue` — and writes a chronicle entry that the reactive UI renders
+  like any other resource. Async task → bridge → ECS → reactor, one frame,
+  full circle; the runner's schedule position is precisely the sync point
+  the bridge design wants. Notably, the same author's experimental async
+  BSN UI implements `on_mutation` by *pumping `Changed<C>` scans at sync
+  points* — convergent evolution: everyone building reactivity on today's
+  Bevy ends up pull-based, which is an argument for standardizing the
+  substrate (shared scans, declared deps) rather than each layer re-rolling
+  it.
 - **Web-style async reactivity needs no new machinery.** This crate's
   `reactive_async` (a `createResource`/React-Query analog: deps → future →
   result-as-component → render) demonstrates that Suspense is just the
