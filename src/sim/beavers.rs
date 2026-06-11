@@ -197,26 +197,26 @@ fn claim_jobs(
                 best = Some((job_entity, dist, is_build));
             }
         }
-        if let Some((job_entity, _, _)) = best {
-            if let Ok((_, mut job)) = jobs.get_mut(job_entity) {
-                job.claimed_by = Some(beaver_entity);
-                beaver.state = BeaverState::Goto(job_entity);
-                // Route on the task pool; replacing the slot cancels any
-                // stale in-flight search. Until (or unless) a route lands,
-                // movement falls back to a straight line.
-                if let Some(start) = map.tile_at(transform.translation) {
-                    let grid = walk_grid(&map, &buildings);
-                    let goal = job.tile;
-                    commands.entity(beaver_entity).insert((
-                        AsyncValue::<ComputedPath>::Pending,
-                        AsyncSlot::new(async move {
-                            ComputedPath {
-                                job: job_entity,
-                                tiles: pathfind::find_path(&grid, start, goal),
-                            }
-                        }),
-                    ));
-                }
+        if let Some((job_entity, _, _)) = best
+            && let Ok((_, mut job)) = jobs.get_mut(job_entity)
+        {
+            job.claimed_by = Some(beaver_entity);
+            beaver.state = BeaverState::Goto(job_entity);
+            // Route on the task pool; replacing the slot cancels any
+            // stale in-flight search. Until (or unless) a route lands,
+            // movement falls back to a straight line.
+            if let Some(start) = map.tile_at(transform.translation) {
+                let grid = walk_grid(&map, &buildings);
+                let goal = job.tile;
+                commands.entity(beaver_entity).insert((
+                    AsyncValue::<ComputedPath>::Pending,
+                    AsyncSlot::new(async move {
+                        ComputedPath {
+                            job: job_entity,
+                            tiles: pathfind::find_path(&grid, start, goal),
+                        }
+                    }),
+                ));
             }
         }
     }

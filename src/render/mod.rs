@@ -269,17 +269,16 @@ fn mirror_tile_state(
     mut states: Query<&mut TileState>,
 ) {
     for i in 0..map.water.len() {
-        if let Ok(mut state) = states.get_mut(entities.water[i]) {
-            if (state.depth - map.water[i]).abs() > 0.01
-                || (state.depth != 0.0 && map.water[i] == 0.0)
-            {
-                state.depth = map.water[i];
-            }
+        if let Ok(mut state) = states.get_mut(entities.water[i])
+            && ((state.depth - map.water[i]).abs() > 0.01
+                || (state.depth != 0.0 && map.water[i] == 0.0))
+        {
+            state.depth = map.water[i];
         }
-        if let Ok(mut state) = states.get_mut(entities.ground[i]) {
-            if state.irrigated != map.irrigated[i] {
-                state.irrigated = map.irrigated[i];
-            }
+        if let Ok(mut state) = states.get_mut(entities.ground[i])
+            && state.irrigated != map.irrigated[i]
+        {
+            state.irrigated = map.irrigated[i];
         }
     }
 }

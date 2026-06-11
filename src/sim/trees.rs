@@ -44,7 +44,7 @@ fn scatter_initial_trees(mut commands: Commands, mut map: ResMut<Map>) {
             let i = map.idx(x, y);
             let near_water = map.irrigated[i] || map.ground[i] <= 1;
             let chance = if near_water { 18 } else { 7 };
-            if (hash as u32) < chance && map.is_free_land(x, y) {
+            if hash < chance && map.is_free_land(x, y) {
                 let growth = 0.4 + (hash as f32 % 7.0) / 10.0;
                 spawn_tree(&mut commands, &mut map, UVec2::new(x, y), growth);
             }

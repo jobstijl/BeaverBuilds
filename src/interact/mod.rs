@@ -50,10 +50,10 @@ fn cancel_tool(
 }
 
 fn track_hover(moved: On<Pointer<Move>>, tiles: Query<&Tile>, mut hover: ResMut<Hover>) {
-    if let Ok(tile) = tiles.get(moved.entity) {
-        if hover.0 != Some(tile.0) {
-            hover.0 = Some(tile.0);
-        }
+    if let Ok(tile) = tiles.get(moved.entity)
+        && hover.0 != Some(tile.0)
+    {
+        hover.0 = Some(tile.0);
     }
 }
 
@@ -72,6 +72,7 @@ fn building_root(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_click(
     click: On<Pointer<Click>>,
     mut commands: Commands,
