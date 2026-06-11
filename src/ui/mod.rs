@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use bevy_reactive_bsn::{
-    AsyncValue, Dep, keyed, reactive, reactive_async, reactive_list, reactive_rebuild,
+    AsyncView, Dep, keyed, reactive, reactive_async, reactive_list, reactive_rebuild,
 };
 
 use crate::AppState;
@@ -162,8 +162,8 @@ fn top_bar() -> impl bevy::scene::Scene {
                             )
                         }
                     },
-                    |_: &World, _: Entity, value: &AsyncValue<f32>| {
-                        let (text, color) = match value.ready() {
+                    |_: &World, _: Entity, view: AsyncView<f32>| {
+                        let (mut text, mut color) = match view.ready() {
                             None => ("Forecast …".to_string(), Color::srgba(1.0, 1.0, 1.0, 0.4)),
                             Some(&fraction) => {
                                 let pct = (fraction * 100.0).round();
@@ -177,6 +177,11 @@ fn top_bar() -> impl bevy::scene::Scene {
                                 (format!("Drought forecast: {pct:.0}% water survives"), color)
                             }
                         };
+                        // A stale value is shown, but marked: dim + ellipsis.
+                        if view.refreshing {
+                            text.push_str(" …");
+                            color = color.with_alpha(0.55);
+                        }
                         bsn! {
                             Text({ text })
                             TextFont { font_size: px(13) }

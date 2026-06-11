@@ -7,16 +7,23 @@
 //! any other ECS state. There is no async runtime inside the reactive layer
 //! — just a task handle driven to completion by a small system.
 //!
-//! Semantics (deliberately Solid-flavored):
-//! - **Suspense** is just rendering: the render closure receives
-//!   [`AsyncValue::Pending`] and returns whatever fallback it likes.
-//! - **Stale-while-revalidate / transitions for free:** when dependencies
-//!   change while a value is already present, the old `Ready` value stays
-//!   (and stays rendered — retained-mode UI persists by default) until the
-//!   new result lands. `Pending` is only ever observed before the *first*
-//!   result.
+//! Semantics — chosen for a retained-mode ECS, with the web equivalents
+//! noted where they exist:
+//! - **Fallbacks are just rendering** (cf. Suspense): the render closure
+//!   receives [`AsyncValue::Pending`] before the first result and returns
+//!   whatever fallback it likes.
+//! - **Last good value by default** (cf. stale-while-revalidate): when
+//!   dependencies change while a value is present, the old `Ready` keeps
+//!   rendering until the new result lands — no fallback flicker. The render
+//!   closure also receives [`AsyncView::refreshing`], so stale values can
+//!   be *marked* stale (dimmed, spinner, …) instead of trusted silently.
+//! - **Correctness-critical consumers should tag, not trust.** Last-good-
+//!   value is right for ambient displays; when acting on a result requires
+//!   knowing *which request* produced it, embed the request in `T` and
+//!   check it (the validation game's pathfinding tags results with the job
+//!   entity) — or use [`AsyncSlot`] directly.
 //! - **Cancellation:** re-launching replaces the in-flight task handle;
-//!   dropping a Bevy [`Task`] cancels it, so stale computations can't
+//!   dropping a Bevy [`Task`] cancels it, so superseded computations can't
 //!   deliver out-of-order results.
 
 use std::future::Future;
@@ -119,6 +126,23 @@ pub(crate) fn drive_async_slots(world: &mut World) {
     }
 }
 
+/// What a [`reactive_async`] render closure sees: the (possibly stale)
+/// value, plus whether a recomputation is currently in flight.
+pub struct AsyncView<'a, T: Send + Sync + 'static> {
+    pub value: &'a AsyncValue<T>,
+    /// A newer computation is running; a `Ready` value is the *previous*
+    /// result. While true, the fragment re-renders every frame (the task
+    /// handle ticks as it is polled), so keep refreshing-state rendering
+    /// cheap.
+    pub refreshing: bool,
+}
+
+impl<'a, T: Send + Sync + 'static> AsyncView<'a, T> {
+    pub fn ready(&self) -> Option<&'a T> {
+        self.value.ready()
+    }
+}
+
 /// An async reactive fragment, usable anywhere a `Scene` is expected.
 ///
 /// When any of `deps` changes, `compute` builds a future from current world
@@ -126,7 +150,8 @@ pub(crate) fn drive_async_slots(world: &mut World) {
 /// stored as [`AsyncValue<T>`] on this entity. `render` (on a child
 /// fragment) re-runs whenever that value changes, receiving
 /// `Pending`-before-first-result and `Ready` thereafter — old values persist
-/// while a recomputation is in flight (stale-while-revalidate).
+/// while a recomputation is in flight, with [`AsyncView::refreshing`]
+/// telling the renderer so.
 ///
 /// ```ignore
 /// reactive_async(
@@ -135,7 +160,7 @@ pub(crate) fn drive_async_slots(world: &mut World) {
 ///         let id = world.resource::<SelectedPlayer>().0;
 ///         async move { fetch_profile(id).await }
 ///     },
-///     |_world, _entity, profile: &AsyncValue<Profile>| match profile.ready() {
+///     |_world, _entity, profile: AsyncView<Profile>| match profile.ready() {
 ///         None => bsn! { Text("loading…") },
 ///         Some(p) => bsn! { Text({ p.name.clone() }) },
 ///     },
@@ -151,7 +176,7 @@ where
     Fut: Future<Output = T> + Send + 'static,
     FCompute: Fn(&World, Entity) -> Fut + Send + Sync + Clone + 'static,
     S: bevy::scene::Scene,
-    FRender: Fn(&World, Entity, &AsyncValue<T>) -> S + Send + Sync + 'static,
+    FRender: for<'a> Fn(&World, Entity, AsyncView<'a, T>) -> S + Send + Sync + 'static,
 {
     // Launcher: a patch reactor on this entity whose scene is a template
     // that (re)spawns the task. Everything it writes — the slot, the
@@ -168,16 +193,19 @@ where
         })
     });
 
-    // Renderer: a child fragment watching the parent's AsyncValue.
+    // Renderer: a child fragment watching the parent's AsyncValue, plus the
+    // task slot so refreshing-state changes re-render too.
     let renderer = ReactorSpec::patch(
-        [Dep::parent::<AsyncValue<T>>()],
+        [Dep::parent::<AsyncValue<T>>(), Dep::parent::<AsyncSlot>()],
         move |world: &World, child: Entity| {
             let pending = AsyncValue::<T>::Pending;
-            let value = world
-                .get::<ChildOf>(child)
-                .and_then(|c| world.get::<AsyncValue<T>>(c.parent()))
+            let parent = world.get::<ChildOf>(child).map(|c| c.parent());
+            let value = parent
+                .and_then(|p| world.get::<AsyncValue<T>>(p))
                 .unwrap_or(&pending);
-            render(world, child, value)
+            let refreshing = parent.is_some_and(|p| world.get::<AsyncSlot>(p).is_some())
+                && value.ready().is_some();
+            render(world, child, AsyncView { value, refreshing })
         },
     );
 

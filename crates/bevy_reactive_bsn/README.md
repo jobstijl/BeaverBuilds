@@ -163,13 +163,16 @@ reactive_async(
 )
 ```
 
-The web concepts map cleanly because the result is just ECS state:
-**Suspense** is the render arm for `Pending`; **stale-while-revalidate /
-transitions come for free** — retained-mode UI plus in-place patching means
-the old `Ready` value (and the old UI) persists until the new result lands,
-with `Pending` only ever observed before the first result; **cancellation**
-is dropping the replaced Bevy `Task`, so stale computations can't deliver
-out-of-order. No async runtime lives inside the layer — one small system
+The semantics are what a retained-mode ECS gives naturally (the web names
+are just useful cross-references): fallbacks are the render arm for
+`Pending` (cf. Suspense); the **last good value keeps rendering** while a
+recomputation is in flight (cf. stale-while-revalidate) — and the render
+closure receives `AsyncView::refreshing`, so stale values are *marked*, not
+silently trusted; **cancellation** is dropping the replaced Bevy `Task`, so
+superseded computations can't deliver out-of-order. Correctness-critical
+consumers should tag results with their request rather than trust
+last-good-value — the game's pathfinding embeds the job entity in `T` and
+checks it. No async runtime lives inside the layer — one small system
 drives task handles to completion. The machinery also stands alone:
 `AsyncSlot::new(future)` on any entity delivers the result as an
 `AsyncValue<T>` component for *plain systems* to consume — the validation

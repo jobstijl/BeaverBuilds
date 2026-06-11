@@ -401,7 +401,7 @@ fn self_dirtying_reactor_terminates_each_frame() {
 // Async resources
 // ---------------------------------------------------------------------------
 
-use bevy_reactive_bsn::{AsyncValue, reactive_async};
+use bevy_reactive_bsn::{AsyncValue, AsyncView, reactive_async};
 
 fn async_child(app: &App, root: Entity) -> Entity {
     let children: Vec<Entity> = app.world().get::<Children>(root).unwrap().iter().collect();
@@ -436,7 +436,7 @@ fn async_resource_renders_pending_then_ready() {
                 let score = world.resource::<Score>().0;
                 async move { score + 100 }
             },
-            |_: &World, _, value: &AsyncValue<u32>| match value.ready() {
+            |_: &World, _, view: AsyncView<u32>| match view.ready() {
                 None => Box::new(bsn! { Label(0) }) as Box<dyn bevy::scene::Scene>,
                 Some(&n) => Box::new(bsn! { Label({ n }) }) as Box<dyn bevy::scene::Scene>,
             },
@@ -471,8 +471,11 @@ fn async_resource_keeps_stale_value_while_revalidating() {
                     Box::pin(std::future::pending())
                 }
             },
-            |_: &World, _, value: &AsyncValue<u32>| {
-                let shown = value.ready().copied().unwrap_or(0);
+            |_: &World, _, view: AsyncView<u32>| {
+                // Encode both facts in one readout: stale value + 100 while
+                // a recomputation is in flight.
+                let shown =
+                    view.ready().copied().unwrap_or(0) + if view.refreshing { 100 } else { 0 };
                 bsn! { Label({ shown }) }
             },
         ))
@@ -483,7 +486,8 @@ fn async_resource_keeps_stale_value_while_revalidating() {
     update_until_label(&mut app, child, 1);
 
     // Dependency changes; the new computation hangs forever. The old value
-    // must keep rendering (stale-while-revalidate), not flip to a fallback.
+    // must keep rendering (last good value), and the view must report the
+    // refresh so it can be marked stale.
     app.world_mut().resource_mut::<Score>().0 = 2;
     for _ in 0..10 {
         app.update();
@@ -491,8 +495,8 @@ fn async_resource_keeps_stale_value_while_revalidating() {
     }
     assert_eq!(
         app.world().get::<Label>(child),
-        Some(&Label(1)),
-        "old Ready value must persist while the new computation is in flight"
+        Some(&Label(101)),
+        "old Ready value must persist AND be reported as refreshing"
     );
 }
 
@@ -860,8 +864,11 @@ fn async_recompute_replaces_ready_value() {
                 let score = world.resource::<Score>().0;
                 async move { score }
             },
-            |_: &World, _, value: &AsyncValue<u32>| {
-                let shown = value.ready().copied().unwrap_or(0);
+            |_: &World, _, view: AsyncView<u32>| {
+                // Encode both facts in one readout: stale value + 100 while
+                // a recomputation is in flight.
+                let shown =
+                    view.ready().copied().unwrap_or(0) + if view.refreshing { 100 } else { 0 };
                 bsn! { Label({ shown }) }
             },
         ))
