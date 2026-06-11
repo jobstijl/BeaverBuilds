@@ -6,9 +6,10 @@
 > Bevy Organization**, and it deliberately **takes no side in the debate around AI
 > contributions to open source**. Per [Bevy's AI policy](https://bevy.org/learn/contribute/policies/ai/),
 > AI-generated code cannot be merged into Bevy Org repositories — accordingly, **nothing
-> here is submitted or intended for merging**. Read it as a sneak peek of where Bevy's
-> reactive-BSN story *could* head, and as validation data for that design space: ideas
-> that humans are welcome to evaluate, re-derive, and hand-author if they prove useful.
+> here is submitted or intended for merging**. Read it as one possible shape of Bevy's
+> reactive-BSN future: a working prototype with tests and measurements, offered as
+> evidence for that design conversation — ideas that humans are welcome to evaluate,
+> re-derive, and hand-author if they prove useful.
 
 A small Timberborn-inspired beaver city builder, built on **Bevy 0.19** (release candidate —
 the first version that ships the new BSN scene system) plus a custom **reactive layer on top
