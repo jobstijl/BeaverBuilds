@@ -120,11 +120,13 @@ fn initial_colony(mut commands: Commands, map: Res<Map>) {
 }
 
 /// Drop jobs whose target no longer exists or whose precondition vanished.
+type JobTargets = Or<(With<Building>, With<Tree>)>;
+
 fn validate_jobs(
     mut commands: Commands,
     map: Res<Map>,
     jobs: Query<(Entity, &Job)>,
-    targets: Query<(), Or<(With<Building>, With<Tree>)>>,
+    targets: Query<(), JobTargets>,
 ) {
     for (entity, job) in &jobs {
         let valid = match job.kind {
