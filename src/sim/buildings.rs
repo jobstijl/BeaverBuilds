@@ -328,3 +328,36 @@ fn update_population(
         population.cap = cap;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placement_rules() {
+        let map = Map::generate(24, 24);
+        let riverbed = (0..24u32)
+            .flat_map(|y| (0..24u32).map(move |x| UVec2::new(x, y)))
+            .find(|t| map.is_river_bed(t.x, t.y))
+            .expect("generated map has a river");
+        let dry_far = (0..24u32)
+            .flat_map(|y| (0..24u32).map(move |x| UVec2::new(x, y)))
+            .find(|t| {
+                map.is_free_land(t.x, t.y)
+                    && !map.adjacent_to_water(t.x, t.y)
+                    && !map.irrigated[map.idx(t.x, t.y)]
+            })
+            .expect("some dry land exists");
+        let shore = (0..24u32)
+            .flat_map(|y| (0..24u32).map(move |x| UVec2::new(x, y)))
+            .find(|t| map.is_free_land(t.x, t.y) && map.adjacent_to_water(t.x, t.y))
+            .expect("some shore exists");
+
+        assert!(placement_error(&map, BuildingKind::Dam, riverbed).is_none());
+        assert!(placement_error(&map, BuildingKind::Dam, dry_far).is_some());
+        assert!(placement_error(&map, BuildingKind::Lodge, riverbed).is_some());
+        assert!(placement_error(&map, BuildingKind::Lodge, dry_far).is_none());
+        assert!(placement_error(&map, BuildingKind::WaterPump, dry_far).is_some());
+        assert!(placement_error(&map, BuildingKind::WaterPump, shore).is_none());
+    }
+}

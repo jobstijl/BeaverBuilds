@@ -105,3 +105,70 @@ pub fn find_path(grid: &WalkGrid, start: UVec2, goal: UVec2) -> Option<Vec<UVec2
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grid(width: u32, height: u32, cost: Vec<f32>) -> WalkGrid {
+        assert_eq!(cost.len(), (width * height) as usize);
+        WalkGrid {
+            width,
+            height,
+            cost,
+        }
+    }
+
+    #[test]
+    fn routes_around_walls() {
+        // 5x5, a vertical wall at x=2 with a gap at y=4.
+        let mut cost = vec![GRASS_COST; 25];
+        for y in 0..4 {
+            cost[(y * 5 + 2) as usize] = f32::INFINITY;
+        }
+        let g = grid(5, 5, cost);
+        let path = find_path(&g, UVec2::new(0, 0), UVec2::new(4, 0)).expect("reachable");
+        assert!(path.contains(&UVec2::new(2, 4)), "must use the gap");
+        assert!(
+            path.iter().all(|t| g.cost[g.idx(*t)].is_finite()),
+            "never steps on blocked tiles"
+        );
+        assert_eq!(*path.last().unwrap(), UVec2::new(4, 0));
+    }
+
+    #[test]
+    fn prefers_stone_paths_over_shorter_grass() {
+        // 7x3: direct grass row at y=1; a paved detour along y=0.
+        let mut cost = vec![GRASS_COST; 21];
+        for x in 0..7 {
+            cost[x as usize] = PATH_COST; // row y=0
+        }
+        let g = grid(7, 3, cost);
+        let path = find_path(&g, UVec2::new(0, 1), UVec2::new(6, 1)).expect("reachable");
+        assert!(
+            path.iter().filter(|t| t.y == 0).count() >= 5,
+            "the cheap paved row should carry the route: {path:?}"
+        );
+    }
+
+    #[test]
+    fn unreachable_is_none() {
+        let mut cost = vec![GRASS_COST; 25];
+        for y in 0..5 {
+            cost[(y * 5 + 2) as usize] = f32::INFINITY;
+        }
+        let g = grid(5, 5, cost);
+        assert!(find_path(&g, UVec2::new(0, 0), UVec2::new(4, 0)).is_none());
+    }
+
+    #[test]
+    fn trivial_cases() {
+        let g = grid(3, 3, vec![GRASS_COST; 9]);
+        assert_eq!(
+            find_path(&g, UVec2::new(1, 1), UVec2::new(1, 1)),
+            Some(Vec::new())
+        );
+        let one = find_path(&g, UVec2::new(0, 0), UVec2::new(1, 0)).unwrap();
+        assert_eq!(one, vec![UVec2::new(1, 0)]);
+    }
+}

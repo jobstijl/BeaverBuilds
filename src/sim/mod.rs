@@ -132,3 +132,95 @@ fn game_speed_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut time: ResMut<Time<Vir
         time.unpause();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bevy::time::TimeUpdateStrategy;
+
+    use super::buildings::{BuildingKind, UnderConstruction, place_building};
+    use super::trees::Tree;
+    use super::*;
+
+    /// Headless, deterministic-time end-to-end run: place a lumberjack near
+    /// mature trees, advance ~45 simulated seconds, and require the whole
+    /// chain to have worked — construction finished, trees chopped (through
+    /// async pathfinding), logs in the stockpile.
+    #[test]
+    fn economy_runs_headless() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                62,
+            )))
+            // No input plugin headless; the speed-hotkey system wants it.
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins(bevy_reactive_bsn::ReactiveBsnPlugin)
+            .add_plugins(SimPlugin);
+        app.update(); // Startup: map, trees, the initial colony.
+
+        let world = app.world_mut();
+        let spot = {
+            let mature: Vec<UVec2> = world
+                .query::<&Tree>()
+                .iter(world)
+                .filter(|t| t.is_mature())
+                .map(|t| t.tile)
+                .collect();
+            assert!(!mature.is_empty(), "initial scatter has mature trees");
+            let map = world.resource::<map::Map>();
+            let center = UVec2::new(map.width / 2, map.height / 2).as_ivec2();
+            let mut mature = mature;
+            mature.sort_by_key(|t| (t.as_ivec2() - center).length_squared());
+            mature
+                .iter()
+                .find_map(|tree| {
+                    let r = 4i32;
+                    (-r..=r)
+                        .flat_map(|dy| (-r..=r).map(move |dx| (dx, dy)))
+                        .find_map(|(dx, dy)| {
+                            let (x, y) = (tree.x as i32 + dx, tree.y as i32 + dy);
+                            (map.in_bounds(x, y) && map.is_free_land(x as u32, y as u32))
+                                .then(|| UVec2::new(x as u32, y as u32))
+                        })
+                })
+                .expect("free land near a mature tree")
+        };
+        let trees_before = world.query::<&Tree>().iter(world).count();
+        world.resource_scope(|world, mut map: Mut<map::Map>| {
+            world.resource_scope(|world, mut stockpile: Mut<Stockpile>| {
+                let mut commands = world.commands();
+                place_building(
+                    &mut commands,
+                    &mut map,
+                    &mut stockpile,
+                    BuildingKind::Lumberjack,
+                    spot,
+                );
+            });
+        });
+        world.flush();
+        let logs_after_placement = world.resource::<Stockpile>().logs;
+
+        for _ in 0..900 {
+            app.update(); // ~56 simulated seconds at 16 Hz.
+        }
+
+        let world = app.world_mut();
+        assert_eq!(
+            world.query::<&UnderConstruction>().iter(world).count(),
+            0,
+            "construction must finish"
+        );
+        let trees_after = world.query::<&Tree>().iter(world).count();
+        assert!(
+            trees_after < trees_before,
+            "beavers must have chopped trees ({trees_before} -> {trees_after})"
+        );
+        assert!(
+            world.resource::<Stockpile>().logs > logs_after_placement,
+            "chopping must yield logs"
+        );
+    }
+}

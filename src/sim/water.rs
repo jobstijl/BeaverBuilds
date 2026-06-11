@@ -27,8 +27,12 @@ const SOURCE_RATE: f32 = 3.0;
 const MAX_SOURCE_DEPTH: f32 = 1.6;
 const FLOW_RATE: f32 = 4.0;
 const EVAPORATION_WET: f32 = 0.002;
-const EVAPORATION_DROUGHT: f32 = 0.05;
-const DAM_HEIGHT: f32 = 0.9;
+// Tuned so a dammed pool outlasts a full drought: total drought
+// evaporation (rate x DROUGHT_LENGTH = 0.6 depth) must stay well below the
+// pool depth a dam can hold. The dams_improve_drought_retention test pins
+// this relationship.
+const EVAPORATION_DROUGHT: f32 = 0.02;
+const DAM_HEIGHT: f32 = 1.2;
 
 /// One cellular-automaton step over a water grid. Pure — also runs on the
 /// async task pool for the drought forecast.
@@ -190,5 +194,59 @@ fn update_irrigation(mut map: ResMut<Map>) {
     }
     for (i, d) in dist.iter().enumerate() {
         map.irrigated[i] = *d <= IRRIGATION_RANGE;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_conserves_water_without_sinks() {
+        let (w, h) = (6u32, 4u32);
+        let n = (w * h) as usize;
+        let ground: Vec<i32> = (0..n).map(|i| ((i * 7) % 3) as i32).collect();
+        let mut water: Vec<f32> = (0..n).map(|i| ((i * 13) % 5) as f32 * 0.3).collect();
+        let before: f32 = water.iter().sum();
+        let no = vec![false; n];
+        for _ in 0..50 {
+            step_water(&ground, &no, &no, None, &mut water, w, h, 1.0 / 16.0, 0.0);
+        }
+        let after: f32 = water.iter().sum();
+        assert!(
+            (before - after).abs() < 1e-3,
+            "no sources/drains/evaporation: {before} -> {after}"
+        );
+        assert!(water.iter().all(|d| *d >= 0.0));
+    }
+
+    /// The gameplay invariant behind the dam: building one in the channel
+    /// must improve the drought forecast.
+    #[test]
+    fn dams_improve_drought_retention() {
+        let (w, h) = (10u32, 3u32);
+        let n = (w * h) as usize;
+        // A channel at y=1 (ground 0) draining off the right edge; banks at 1.
+        let mut ground = vec![1i32; n];
+        let mut water = vec![0.0f32; n];
+        let mut drain = vec![false; n];
+        for x in 0..w {
+            let i = (w + x) as usize; // y = 1
+            ground[i] = 0;
+            water[i] = 1.0;
+        }
+        drain[(w + w - 1) as usize] = true;
+
+        let no_dam = vec![false; n];
+        let without =
+            forecast_drought_retention(ground.clone(), no_dam, drain.clone(), water.clone(), w, h);
+        let mut dam = vec![false; n];
+        dam[(w + w - 3) as usize] = true; // dam in the channel, before the drain
+        let with = forecast_drought_retention(ground, dam, drain, water, w, h);
+        assert!(
+            with > without + 0.05,
+            "dam must retain noticeably more water: {without:.3} -> {with:.3}"
+        );
+        assert!((0.0..=1.0).contains(&with) && (0.0..=1.0).contains(&without));
     }
 }
