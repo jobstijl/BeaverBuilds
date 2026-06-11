@@ -258,35 +258,34 @@ path. We'd encourage upstream reactivity to stay pull-based.
 
 ## What needs Bevy (the actual upstream asks)
 
-1. **Per-field invalidation** — partially within reach today, and the
-   reachable half is validated here rather than assumed. The *wake* half is
-   expressible as tick-gated value projections:
-   `Dep::resource_value(|s: &Season| s.remaining.ceil() as u32)` wakes a
-   reactor only when the projected value changes; quiet sources cost one
-   tick compare, noisy sources with stable projections cost one projection
-   + `PartialEq` (three tests pin the semantics; in the validation game the
-   calendar re-renders once per displayed second while the underlying field
-   ticks every frame — with the simulation writing naturally, no derived
-   resources, no `bypass_change_detection`). What the projection costs — a
-   cached `PartialEq` value and a hand-written lens — is precisely what
-   upstream support would eliminate: (a) field-level dirty metadata in
-   change detection, (b) automatic inference of which fields a patch reads
-   (no manual lens), and (c) partial re-application of resolved patches.
-   Those three are **not validated here and cannot be from outside** — they
-   are the experiment upstream would run — though their *value* shrank
-   under examination: the **re-application half is also approximable
-   today** by fragment splitting. An entity carries any number of
-   independent fragments (composed via `Reactor::and` or merged through
-   sequential scene application), so "re-apply only the dirty field"
-   becomes "one tiny fragment per concern, each with its own projection
-   dep" — validated by a test where two fragments on one entity wake and
-   re-apply strictly independently. What genuinely remains for upstream is
-   the ergonomic and constant-factor delta: field dirty metadata (no
-   projection cache), lens inference (no hand-written projection), and
-   sub-patch diffing (no fragment-splitting boilerplate). That the layer
-   gained per-field wakes *and* per-concern re-application without touching
-   anything else is itself evidence that the rest of the design is agnostic
-   to how fine the dirty bits get.
+1. **Per-field invalidation — a smaller ask than expected.** We started
+   from "this is the one thing a layer cannot do," then validated both
+   halves of the *capability* on the public API; what remains for upstream
+   is ergonomics and constant factors, not capability.
+   - **Per-field wakes** are tick-gated value projections:
+     `Dep::resource_value(|s: &Season| s.remaining.ceil() as u32)` wakes a
+     fragment only when the projected value changes. Quiet sources cost one
+     tick compare; noisy sources with stable projections cost one
+     projection + `PartialEq` (benchmarked at the idle floor for 10k deps
+     over a per-frame-noisy resource). In the validation game, the calendar
+     re-renders once per displayed second while the underlying field ticks
+     every frame — the simulation writes naturally; no derived resources,
+     no `bypass_change_detection`.
+   - **Per-field re-application** is fragment splitting: an entity carries
+     any number of independent fragments (`Reactor::and`, or merged via
+     sequential scene application), so "re-apply only the dirty field"
+     becomes "one small fragment per concern, each with its own projection
+     dep." A test pins two fragments on one entity waking and re-applying
+     strictly independently.
+   - **The remaining upstream experiment** — unvalidatable from outside by
+     nature — is removing what the layer-level emulation costs: field-level
+     dirty metadata (eliminates the projection cache and compare), lens
+     inference (eliminates the hand-written projection closures), and
+     sub-patch diffing (eliminates the fragment-splitting boilerplate).
+
+   That the layer gained both halves without touching anything else is
+   itself evidence that the rest of the design is agnostic to how fine the
+   dirty bits get.
 2. *(Optional)* a `bsn!`-native reactive entry. We expected to need one; we
    didn't — scene-function includes already compose `reactive(...)`
    naturally, with full IDE support. A dedicated syntax would only add
