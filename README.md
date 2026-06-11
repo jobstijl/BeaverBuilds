@@ -46,15 +46,15 @@ right-click/Esc cancel · click a building to inspect · Space pause · 1/2/3 ga
 
 The layer lives in [`crates/bevy_reactive_bsn`](crates/bevy_reactive_bsn) as a standalone,
 tested, dual-licensed (MIT OR Apache-2.0, like Bevy) library with its own
-[README](crates/bevy_reactive_bsn/README.md) and an upstream
-[design report / proposal](crates/bevy_reactive_bsn/PROPOSAL.md).
+[README](crates/bevy_reactive_bsn/README.md) and a
+[design report](crates/bevy_reactive_bsn/PROPOSAL.md).
 
 Bevy 0.19's BSN gives you `bsn!` scenes, field-level component **patches**, and
 `apply_scene` to (re)apply a scene to an existing entity — but no reactivity: nothing
 re-applies a scene when game state changes. Cart's stated direction (bevy discussion
 [#14437](https://github.com/bevyengine/bevy/discussions/14437)) is "fine grained
 observer-style reactivity" built on the ECS itself rather than a separate signal runtime.
-`src/reactive/` implements that:
+The crate implements that:
 
 ```rust
 // Reactive fragments compose directly inside bsn! trees — no special syntax,
