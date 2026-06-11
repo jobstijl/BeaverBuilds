@@ -1,9 +1,18 @@
-# Reactive BSN: a change-tick-driven reactivity layer — design report & proposal
+# Reactive BSN: a change-tick-driven reactivity layer — design report
+
+> **AI disclosure:** this document and the implementation it describes were
+> written by an AI (Anthropic's Claude), directed and reviewed by a human.
+> Per [Bevy's AI policy](https://bevy.org/learn/contribute/policies/ai/),
+> none of this is submitted as a contribution and the code is not mergeable
+> into Bevy Org repositories. It is published as *design validation* for the
+> "Reactive BSN" experimentation phase called for in [#14437] — evidence
+> about what works in this design space, for humans to evaluate, re-derive,
+> and hand-author if any of it proves useful. No side is taken in the
+> AI-contribution debate.
 
 **Status:** working implementation on Bevy 0.19 public APIs, validated in a
 full game (UI *and* world entities), with behavioral tests and benchmarks.
-Intended as input to the post-MVP "Reactive BSN" experimentation phase
-called for in [#14437] and deferred from [#23413].
+This design space was called for in [#14437] and deferred from [#23413].
 
 ## TL;DR
 

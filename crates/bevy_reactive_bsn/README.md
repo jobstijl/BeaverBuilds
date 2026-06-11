@@ -1,5 +1,13 @@
 # bevy_reactive_bsn
 
+> **AI disclosure:** this crate (code, tests, and prose) was written by an AI
+> (Anthropic's Claude), directed and reviewed by a human. It is not affiliated
+> with the Bevy Organization and takes no side in the AI-contribution debate.
+> Under [Bevy's AI policy](https://bevy.org/learn/contribute/policies/ai/) this
+> code is not mergeable into Bevy Org repositories and is not submitted as a
+> contribution — it exists as design validation: a working answer to "what
+> could reactive BSN feel like", for humans to evaluate and re-derive freely.
+
 Fine-grained, change-tick-driven reactivity for Bevy's BSN scene system
 (`bsn!`, Bevy 0.19+) — an experiment in the design space Cart sketched for
 "Reactive BSN" in [bevy#14437], built entirely on public APIs.

@@ -1,5 +1,15 @@
 # BeaverBuilds
 
+> [!IMPORTANT]
+> **This entire project — code, tests, benchmarks, and prose — was written by an AI**
+> (Anthropic's Claude), directed and reviewed by a human. It is **not affiliated with the
+> Bevy Organization**, and it deliberately **takes no side in the debate around AI
+> contributions to open source**. Per [Bevy's AI policy](https://bevy.org/learn/contribute/policies/ai/),
+> AI-generated code cannot be merged into Bevy Org repositories — accordingly, **nothing
+> here is submitted or intended for merging**. Read it as a sneak peek of where Bevy's
+> reactive-BSN story *could* head, and as validation data for that design space: ideas
+> that humans are welcome to evaluate, re-derive, and hand-author if they prove useful.
+
 A small Timberborn-inspired beaver city builder, built on **Bevy 0.19** (release candidate —
 the first version that ships the new BSN scene system) plus a custom **reactive layer on top
 of BSN**, since upstream BSN deliberately ships without reactivity.
