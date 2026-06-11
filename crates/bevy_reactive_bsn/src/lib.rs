@@ -154,9 +154,14 @@ impl ReactorSpec {
         F: Fn(&World, Entity) -> S + Send + Sync + 'static,
     {
         // Type-erase at the closure boundary: `bsn!` types are unnameable.
+        // The entity may have been despawned earlier in the same pass (e.g.
+        // by an ancestor's rebuild); that is a no-op, not an error.
         let render = Arc::new(move |world: &mut World, target: Entity| {
             let scene = scene_fn(world, target);
-            world.entity_mut(target).apply_scene(scene)
+            match world.get_entity_mut(target) {
+                Ok(mut entity) => entity.apply_scene(scene),
+                Err(_) => Ok(()),
+            }
         });
         Self {
             deps: deps.into_iter().collect::<Vec<_>>().into(),

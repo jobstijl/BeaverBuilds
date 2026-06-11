@@ -188,7 +188,7 @@ fn update_irrigation(mut map: ResMut<Map>) {
             }
         }
     }
-    for i in 0..dist.len() {
-        map.irrigated[i] = dist[i] <= IRRIGATION_RANGE;
+    for (i, d) in dist.iter().enumerate() {
+        map.irrigated[i] = *d <= IRRIGATION_RANGE;
     }
 }

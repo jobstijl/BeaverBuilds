@@ -65,6 +65,11 @@ pub fn run_reactors(world: &mut World, mut scans: Local<SharedScans>, mut frame:
         }
 
         for (entity, mut instances) in reactors {
+            // An earlier entry this pass may have despawned this entity
+            // (e.g. a rebuild tearing down children that carry reactors).
+            if world.get_entity(entity).is_err() {
+                continue;
+            }
             for instance in &mut instances {
                 if pass > 0
                     && skips_pass(
@@ -144,6 +149,9 @@ pub fn run_reactors(world: &mut World, mut scans: Local<SharedScans>, mut frame:
         }
 
         for (entity, spec, last_run, mut state, mut spawned) in lists {
+            if world.get_entity(entity).is_err() {
+                continue;
+            }
             let woke = first_dirty_dep(
                 world, &mut scans, &spec.deps, &mut state, entity, last_run, this_run,
             );

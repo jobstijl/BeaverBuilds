@@ -145,9 +145,9 @@ fn validate_jobs(
 fn walk_grid(map: &Map, buildings: &Query<(&Building, Has<UnderConstruction>)>) -> WalkGrid {
     let n = (map.width * map.height) as usize;
     let mut cost = vec![GRASS_COST; n];
-    for i in 0..n {
+    for (i, cost) in cost.iter_mut().enumerate() {
         if map.water[i] > 0.35 || map.tree[i].is_some() {
-            cost[i] = f32::INFINITY;
+            *cost = f32::INFINITY;
         }
     }
     for (building, under_construction) in buildings {
@@ -222,14 +222,16 @@ fn claim_jobs(
     }
 }
 
+type BeaverMovement = (
+    &'static mut Beaver,
+    &'static mut Transform,
+    Option<&'static mut AsyncValue<ComputedPath>>,
+);
+
 fn move_beavers(
     time: Res<Time>,
     map: Res<Map>,
-    mut beavers: Query<(
-        &mut Beaver,
-        &mut Transform,
-        Option<&mut AsyncValue<ComputedPath>>,
-    )>,
+    mut beavers: Query<BeaverMovement>,
     jobs: Query<&Job>,
     buildings: Query<&Building, Without<UnderConstruction>>,
 ) {
@@ -319,7 +321,6 @@ fn work_jobs(
         if let JobKind::Build(building) = job.kind {
             // Mirror progress onto the building so the UI can show it.
             if let Ok(mut e) = commands.get_entity(building) {
-                let dt = dt;
                 e.queue(move |mut entity: EntityWorldMut| {
                     if let Some(mut uc) = entity.get_mut::<UnderConstruction>() {
                         uc.done += dt;

@@ -1094,3 +1094,34 @@ fn sequential_scene_applications_merge_inline_fragments() {
         "A: reconstructed scene appended a second instance (both wake once)"
     );
 }
+
+/// A rebuild that despawns children carrying their own (dirty) reactors must
+/// not panic when the runner reaches the despawned children's entries later
+/// in the same pass. (Regression: this was archetype-order dependent.)
+#[test]
+fn rebuild_despawning_reactive_children_same_pass_is_safe() {
+    let mut app = app();
+    let root = app
+        .world_mut()
+        .spawn(Reactor::rebuild(
+            [Dep::resource::<Score>()],
+            |_: &World, _| {
+                bsn! {
+                    Children [
+                        reactive([Dep::resource::<Score>()], |world: &World, _: Entity| {
+                            let score = world.resource::<Score>().0;
+                            bsn! { Label({ score }) }
+                        }),
+                    ]
+                }
+            },
+        ))
+        .id();
+    app.update();
+    // Both the root (rebuild) and the child's reactor are dirty in the same
+    // pass; the rebuild despawns the child before its entry is reached.
+    app.world_mut().resource_mut::<Score>().0 = 5;
+    app.update();
+    let children: Vec<Entity> = app.world().get::<Children>(root).unwrap().iter().collect();
+    assert_eq!(app.world().get::<Label>(children[0]), Some(&Label(5)));
+}
