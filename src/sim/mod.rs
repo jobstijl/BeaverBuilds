@@ -1,6 +1,7 @@
 pub mod beavers;
 pub mod buildings;
 pub mod map;
+pub mod pathfind;
 pub mod trees;
 pub mod water;
 

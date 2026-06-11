@@ -325,7 +325,13 @@ path. We'd encourage upstream reactivity to stay pull-based.
   fall out of retained-mode UI *by default* — the old value keeps rendering
   until the new one lands, no `startTransition` machinery required. The
   async result being an ordinary component is the load-bearing decision:
-  reactivity composes with it through the same deps as everything else.
+  reactivity composes with it through the same deps as everything else —
+  and so do plain systems. The validation game exercises both consumers:
+  its drought-forecast readout is a `reactive_async` fragment, and its
+  beaver pathfinding (A* on the task pool, requested on job claim,
+  cancelled by slot replacement, waypoints consumed by the movement
+  system) uses the same `AsyncSlot`/`AsyncValue` machinery with no reactor
+  involved at all.
 
 ## Open questions
 

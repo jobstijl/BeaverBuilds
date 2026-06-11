@@ -49,9 +49,52 @@ type PollFn = dyn FnMut(&mut World, Entity) -> bool + Send + Sync;
 
 /// An in-flight task, type-erased so one driver system serves every value
 /// type. Replacing the slot drops (= cancels) the previous task.
+///
+/// [`reactive_async`] uses this internally, but it stands alone: insert one
+/// on any entity and the future's output lands there as
+/// [`AsyncValue<T>::Ready`], to be consumed by plain systems just as well
+/// as by reactors — async results are ordinary ECS state either way.
+///
+/// ```ignore
+/// // e.g. request a path; a movement system reads AsyncValue<PathResult>.
+/// commands.entity(beaver).insert((
+///     AsyncValue::<PathResult>::Pending,
+///     AsyncSlot::new(async move { find_path(grid, from, to) }),
+/// ));
+/// ```
 #[derive(Component)]
 pub struct AsyncSlot {
     poll: Box<PollFn>,
+}
+
+impl AsyncSlot {
+    /// Spawn `future` on the [`AsyncComputeTaskPool`]; when it completes,
+    /// its output is inserted on the owning entity as [`AsyncValue::Ready`].
+    /// Inserting a new slot replaces (= cancels) any in-flight one.
+    pub fn new<T, Fut>(future: Fut) -> Self
+    where
+        T: Send + Sync + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+    {
+        let mut task: Option<Task<T>> = Some(AsyncComputeTaskPool::get().spawn(future));
+        AsyncSlot {
+            poll: Box::new(move |world: &mut World, entity: Entity| {
+                let Some(running) = task.as_mut() else {
+                    return true;
+                };
+                match block_on(poll_once(running)) {
+                    Some(value) => {
+                        task = None;
+                        if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
+                            entity_mut.insert(AsyncValue::Ready(value));
+                        }
+                        true
+                    }
+                    None => false,
+                }
+            }),
+        }
+    }
 }
 
 /// Polls in-flight tasks; on completion, writes the typed [`AsyncValue`]
@@ -121,24 +164,7 @@ where
             if ctx.entity.get::<AsyncValue<T>>().is_none() {
                 ctx.entity.insert(AsyncValue::<T>::Pending);
             }
-            let mut task: Option<Task<T>> = Some(AsyncComputeTaskPool::get().spawn(future));
-            Ok(AsyncSlot {
-                poll: Box::new(move |world: &mut World, entity: Entity| {
-                    let Some(running) = task.as_mut() else {
-                        return true;
-                    };
-                    match block_on(poll_once(running)) {
-                        Some(value) => {
-                            task = None;
-                            if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
-                                entity_mut.insert(AsyncValue::Ready(value));
-                            }
-                            true
-                        }
-                        None => false,
-                    }
-                }),
-            })
+            Ok(AsyncSlot::new(future))
         })
     });
 

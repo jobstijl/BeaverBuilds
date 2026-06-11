@@ -1,9 +1,19 @@
 use bevy::prelude::*;
+use bevy_reactive_bsn::{AsyncSlot, AsyncValue};
 
 use super::Stockpile;
-use super::buildings::{Building, UnderConstruction};
+use super::buildings::{Building, BuildingKind, UnderConstruction};
 use super::map::Map;
+use super::pathfind::{self, GRASS_COST, PATH_COST, WalkGrid};
 use super::trees::{Tree, spawn_tree};
+
+/// An async pathfinding result, tagged with the job it was computed for so
+/// stale routes are ignored. Lands on the beaver as `AsyncValue<ComputedPath>`
+/// (the layer's async machinery, consumed here by a plain system).
+pub struct ComputedPath {
+    pub job: Entity,
+    pub tiles: Option<Vec<UVec2>>,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum BeaverState {
@@ -129,10 +139,38 @@ fn validate_jobs(
     }
 }
 
+/// Traversal-cost snapshot for the async pathfinder: deep water, trees and
+/// buildings block; finished stone paths are markedly cheaper than grass,
+/// so computed routes bend along the road network.
+fn walk_grid(map: &Map, buildings: &Query<(&Building, Has<UnderConstruction>)>) -> WalkGrid {
+    let n = (map.width * map.height) as usize;
+    let mut cost = vec![GRASS_COST; n];
+    for i in 0..n {
+        if map.water[i] > 0.35 || map.tree[i].is_some() {
+            cost[i] = f32::INFINITY;
+        }
+    }
+    for (building, under_construction) in buildings {
+        let i = map.idx(building.tile.x, building.tile.y);
+        cost[i] = match building.kind {
+            BuildingKind::Path if !under_construction => PATH_COST,
+            BuildingKind::Path => GRASS_COST,
+            _ => f32::INFINITY,
+        };
+    }
+    WalkGrid {
+        width: map.width,
+        height: map.height,
+        cost,
+    }
+}
+
 fn claim_jobs(
+    mut commands: Commands,
     mut beavers: Query<(Entity, &mut Beaver, &Transform)>,
     mut jobs: Query<(Entity, &mut Job)>,
     map: Res<Map>,
+    buildings: Query<(&Building, Has<UnderConstruction>)>,
 ) {
     for (beaver_entity, mut beaver, transform) in &mut beavers {
         if beaver.state != BeaverState::Idle {
@@ -163,6 +201,22 @@ fn claim_jobs(
             if let Ok((_, mut job)) = jobs.get_mut(job_entity) {
                 job.claimed_by = Some(beaver_entity);
                 beaver.state = BeaverState::Goto(job_entity);
+                // Route on the task pool; replacing the slot cancels any
+                // stale in-flight search. Until (or unless) a route lands,
+                // movement falls back to a straight line.
+                if let Some(start) = map.tile_at(transform.translation) {
+                    let grid = walk_grid(&map, &buildings);
+                    let goal = job.tile;
+                    commands.entity(beaver_entity).insert((
+                        AsyncValue::<ComputedPath>::Pending,
+                        AsyncSlot::new(async move {
+                            ComputedPath {
+                                job: job_entity,
+                                tiles: pathfind::find_path(&grid, start, goal),
+                            }
+                        }),
+                    ));
+                }
             }
         }
     }
@@ -171,12 +225,16 @@ fn claim_jobs(
 fn move_beavers(
     time: Res<Time>,
     map: Res<Map>,
-    mut beavers: Query<(&mut Beaver, &mut Transform)>,
+    mut beavers: Query<(
+        &mut Beaver,
+        &mut Transform,
+        Option<&mut AsyncValue<ComputedPath>>,
+    )>,
     jobs: Query<&Job>,
     buildings: Query<&Building, Without<UnderConstruction>>,
 ) {
     let dt = time.delta_secs();
-    for (mut beaver, mut transform) in &mut beavers {
+    for (mut beaver, mut transform, route) in &mut beavers {
         let BeaverState::Goto(job_entity) = beaver.state else {
             continue;
         };
@@ -191,6 +249,27 @@ fn move_beavers(
             beaver.state = BeaverState::Work(job_entity);
             continue;
         }
+        // Steer toward the next waypoint of the async route when one has
+        // landed (consuming waypoints as they are reached); otherwise —
+        // still pending, computed for an older job, or unreachable — fall
+        // back to the straight line.
+        let mut waypoint = target;
+        if let Some(mut route) = route
+            && let AsyncValue::Ready(computed) = &mut *route
+            && computed.job == job_entity
+            && let Some(tiles) = &mut computed.tiles
+        {
+            while let Some(&next) = tiles.first() {
+                let center = map.tile_center(next.x, next.y);
+                if (center - transform.translation).with_y(0.0).length() < 0.2 {
+                    tiles.remove(0);
+                } else {
+                    waypoint = center;
+                    break;
+                }
+            }
+        }
+        let to_waypoint = (waypoint - transform.translation).with_y(0.0);
         // Finished paths under the beaver's feet speed it up considerably.
         let current_tile = map.tile_at(transform.translation);
         let on_path = current_tile.is_some_and(|t| {
@@ -203,8 +282,8 @@ fn move_beavers(
         } else {
             WALK_SPEED
         };
-        let step = to_target.normalize_or_zero() * speed * dt;
-        transform.translation += step.clamp_length_max(dist);
+        let step = to_waypoint.normalize_or_zero() * speed * dt;
+        transform.translation += step.clamp_length_max(to_waypoint.length().min(dist));
         // Stick to the terrain surface and face the walking direction.
         if let Some(tile) = current_tile {
             let ground = map.tile_center(tile.x, tile.y).y;

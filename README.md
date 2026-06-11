@@ -35,8 +35,9 @@ stocked, and grow the colony.
 The world is rendered with distance fog and a two-light setup; droughts pull in a dusty
 haze, harden the sunlight and dry out the grass — all of it reactive state.
 
-Beavers are simple agents: they claim the nearest posted job (construction first), walk
-there, work, and the result lands in the colony stockpile. They eat and drink on a timer;
+Beavers are simple agents: they claim the nearest posted job (construction first),
+**pathfind to it on the async task pool** (A* that routes around water and trees and
+bends along your stone paths), work, and the result lands in the colony stockpile. They eat and drink on a timer;
 when stocks run out they turn red and eventually die.
 
 **Controls:** WASD pan · Q/E rotate · scroll zoom · click a build button then a tile ·

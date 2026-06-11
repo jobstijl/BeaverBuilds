@@ -170,7 +170,12 @@ the old `Ready` value (and the old UI) persists until the new result lands,
 with `Pending` only ever observed before the first result; **cancellation**
 is dropping the replaced Bevy `Task`, so stale computations can't deliver
 out-of-order. No async runtime lives inside the layer — one small system
-drives task handles to completion. (Bevy's in-flight `bevy_async` sync-point
+drives task handles to completion. The machinery also stands alone:
+`AsyncSlot::new(future)` on any entity delivers the result as an
+`AsyncValue<T>` component for *plain systems* to consume — the validation
+game's beavers pathfind this way (A* on the task pool, waypoints read by
+the movement system), evidence that "async results are ordinary ECS state"
+is not a UI-shaped claim. (Bevy's in-flight `bevy_async` sync-point
 bridge, PR #21744, composes with this rather than replacing it: bridges give
 async tasks *ECS access*; `reactive_async` gives reactive scenes *async
 values*.)

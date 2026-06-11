@@ -86,7 +86,7 @@ use bevy::ecs::template::template;
 use bevy::prelude::*;
 use bevy::scene::SpawnSceneError;
 
-pub use async_resource::{AsyncValue, reactive_async};
+pub use async_resource::{AsyncSlot, AsyncValue, reactive_async};
 pub use dep::Dep;
 use dep::DepState;
 
