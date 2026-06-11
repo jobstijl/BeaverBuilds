@@ -345,9 +345,14 @@ fn work_jobs(
             JobKind::Chop(tree_entity) => {
                 if let Ok(tree) = trees.get(tree_entity) {
                     let i = map.idx(tree.tile.x, tree.tile.y);
-                    map.tree[i] = None;
-                    commands.entity(tree_entity).despawn();
-                    stockpile.logs += 3.0;
+                    // Two lumberjacks can target the same tree; the map slot
+                    // is the claim — only the first completer fells it (and
+                    // is paid for it).
+                    if map.tree[i].is_some() {
+                        map.tree[i] = None;
+                        commands.entity(tree_entity).despawn();
+                        stockpile.logs += 3.0;
+                    }
                 }
             }
             JobKind::Pump(_) => {
