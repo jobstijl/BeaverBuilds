@@ -1,0 +1,18 @@
+[package]
+name = "bevy_reactive_bsn"
+version = "0.1.0"
+edition = "2024"
+description = "Fine-grained, change-tick-driven reactivity for Bevy's BSN scene system"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bevyengine/bevy/discussions/14437"
+keywords = ["bevy", "bsn", "reactive", "ui", "gamedev"]
+
+[dependencies]
+bevy = { version = "0.19.0-rc.3", default-features = false, features = [
+    "bevy_scene",
+    "bevy_log",
+] }
+
+[dev-dependencies]
+# Tests use a headless subset; the runnable example needs the full engine.
+bevy = { version = "0.19.0-rc.3" }

@@ -1,0 +1,19 @@
+[workspace]
+members = ["crates/bevy_reactive_bsn"]
+
+[package]
+name = "beaverbuilds"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.19.0-rc.3"
+bevy_reactive_bsn = { path = "crates/bevy_reactive_bsn" }
+
+# Bevy's recommended dev profile: keep our own code fast to compile,
+# but optimize dependencies (the engine) so the game is actually playable.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
