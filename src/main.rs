@@ -1,6 +1,7 @@
 mod bench;
 mod bridge;
 mod chronicle;
+mod demo;
 mod interact;
 mod render;
 mod sim;
@@ -8,6 +9,13 @@ mod ui;
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+
+/// `BB_FAST=1` starts the game at 4x speed (combinable with any mode).
+fn apply_speed_env(mut time: ResMut<Time<Virtual>>) {
+    if std::env::var("BB_FAST").is_ok() {
+        time.set_relative_speed(4.0);
+    }
+}
 
 fn main() {
     if std::env::var("BB_BENCH").is_ok() {
@@ -27,11 +35,13 @@ fn main() {
             bevy_reactive_bsn::ReactiveBsnPlugin,
             bridge::BridgePlugin,
             chronicle::ChroniclePlugin,
+            demo::DemoPlugin,
             sim::SimPlugin,
             render::RenderPlugin,
             interact::InteractPlugin,
             ui::GameUiPlugin,
         ))
+        .add_systems(Startup, apply_speed_env)
         .add_systems(Update, debug_screenshot)
         .add_systems(Update, debug_autobuild)
         .run();
@@ -45,7 +55,6 @@ fn debug_autobuild(
     time: Res<Time<Real>>,
     mut map: ResMut<sim::map::Map>,
     mut stockpile: ResMut<sim::Stockpile>,
-    mut virtual_time: ResMut<Time<Virtual>>,
     mut selected: ResMut<interact::Selected>,
     mut done: Local<bool>,
 ) {
@@ -54,9 +63,6 @@ fn debug_autobuild(
         return;
     }
     *done = true;
-    if std::env::var("BB_FAST").is_ok() {
-        virtual_time.set_relative_speed(4.0);
-    }
     stockpile.logs += 100.0;
     let kinds = [
         BuildingKind::Lodge,

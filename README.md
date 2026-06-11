@@ -46,6 +46,30 @@ when stocks run out they turn red and eventually die.
 **Controls:** WASD pan · Q/E rotate · scroll zoom · click a build button then a tile ·
 right-click/Esc cancel · click a building to inspect · Space pause · 1/2/3 game speed.
 
+## Running it
+
+```sh
+cargo run                 # play it yourself (dev profile is tuned for iteration)
+BB_DEMO=1 cargo run       # attract mode: a scripted governor plays the colony
+cargo run --release       # full optimization
+```
+
+In demo mode the governor takes one deliberate action every few seconds — bootstraps a
+lumberjack/pump/farm, adds lodges as housing fills, **dams the river when the async
+drought forecast dips below 40%**, paves roads tile-by-tile toward new buildings — while
+the camera orbits slowly. You can still take the controls at any time.
+
+Optional environment variables (combinable):
+
+| variable | effect |
+|---|---|
+| `BB_DEMO=1` | scripted governor + orbiting camera (attract mode) |
+| `BB_FAST=1` | start at 4× game speed |
+| `BB_AUTOBUILD=1` | instantly place one of each building at startup (test rig) |
+| `BB_SHOT=/path/prefix` | numbered screenshot every 10 s and on F12 |
+| `BB_BENCH=1` | run the headless reactive-layer benchmarks and exit |
+| `RUST_LOG=reactive_bsn=debug` | trace which dependency woke which reactor |
+
 ## Reactive BSN — the interesting part
 
 The layer lives in [`crates/bevy_reactive_bsn`](crates/bevy_reactive_bsn) as a standalone,
