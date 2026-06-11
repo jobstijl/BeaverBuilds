@@ -84,7 +84,7 @@ fn building_root(
 
 #[allow(clippy::too_many_arguments)]
 fn handle_click(
-    click: On<Pointer<Click>>,
+    mut click: On<Pointer<Click>>,
     state: Res<State<AppState>>,
     mut commands: Commands,
     tiles: Query<&Tile>,
@@ -98,6 +98,10 @@ fn handle_click(
     if *state.get() != AppState::Playing {
         return;
     }
+    // Clicks on multi-part buildings bubble from the part to the root; we
+    // resolve the root ourselves, so handle each click exactly once (a
+    // double-fired demolish refunded twice).
+    click.propagate(false);
     if click.button == PointerButton::Secondary {
         *tool = Tool::Select;
         selected.0 = None;

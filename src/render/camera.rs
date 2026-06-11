@@ -1,4 +1,4 @@
-use bevy::input::mouse::MouseWheel;
+use bevy::input::mouse::{AccumulatedMouseMotion, MouseWheel};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy_reactive_bsn::{Dep, Reactor};
@@ -89,10 +89,17 @@ fn spawn_camera(mut commands: Commands) {
 
 fn drive_camera(
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    motion: Res<AccumulatedMouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
     time: Res<Time<Real>>,
     mut rig: ResMut<CameraRig>,
 ) {
+    // Orbit with middle-mouse drag (yaw + tilt), or tilt with R/F.
+    if mouse.pressed(MouseButton::Middle) {
+        rig.yaw -= motion.delta.x * 0.005;
+        rig.pitch = (rig.pitch + motion.delta.y * 0.004).clamp(0.35, 1.45);
+    }
     let dt = time.delta_secs();
     let mut pan = Vec2::ZERO;
     if keys.pressed(KeyCode::KeyW) {
@@ -118,6 +125,12 @@ fn drive_camera(
     }
     if keys.pressed(KeyCode::KeyE) {
         rig.yaw -= 1.5 * dt;
+    }
+    if keys.pressed(KeyCode::KeyR) {
+        rig.pitch = (rig.pitch - 1.2 * dt).clamp(0.35, 1.45);
+    }
+    if keys.pressed(KeyCode::KeyF) {
+        rig.pitch = (rig.pitch + 1.2 * dt).clamp(0.35, 1.45);
     }
     for ev in wheel.read() {
         rig.distance = (rig.distance - ev.y * 2.0).clamp(6.0, 60.0);

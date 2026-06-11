@@ -144,7 +144,10 @@ fn validate_jobs(
 /// Traversal-cost snapshot for the async pathfinder: deep water, trees and
 /// buildings block; finished stone paths are markedly cheaper than grass,
 /// so computed routes bend along the road network.
-fn walk_grid(map: &Map, buildings: &Query<(&Building, Has<UnderConstruction>)>) -> WalkGrid {
+pub(crate) fn walk_grid(
+    map: &Map,
+    buildings: &Query<(&Building, Has<UnderConstruction>)>,
+) -> WalkGrid {
     let n = (map.width * map.height) as usize;
     let mut cost = vec![GRASS_COST; n];
     for (i, cost) in cost.iter_mut().enumerate() {

@@ -61,24 +61,24 @@ impl Map {
         }
 
         // Carve a meandering river (west to east), 2 tiles wide, at level 0.
+        // Only the two water rows are carved: banks keep their terrain
+        // height, so a dam across the wet tiles truly seals the channel
+        // (an earlier third carved-but-dry row let water sneak around).
         for x in 0..width {
             let center = (height as f32 / 2.0
                 + (x as f32 * 0.18 + seed * 0.61).sin() * (height as f32 * 0.14))
                 as i32;
-            for dy in -1..=1 {
+            for dy in -1..=0 {
                 let y = (center + dy).clamp(0, height as i32 - 1) as u32;
                 let i = map.idx(x, y);
                 map.ground[i] = 0;
-                if dy != 1 {
-                    // 2-wide water channel; the third carved row is the bank.
-                    if x == 0 {
-                        map.source[i] = true;
-                    }
-                    if x == width - 1 {
-                        map.drain[i] = true;
-                    }
-                    map.water[i] = 1.0;
+                if x == 0 {
+                    map.source[i] = true;
                 }
+                if x == width - 1 {
+                    map.drain[i] = true;
+                }
+                map.water[i] = 1.0;
             }
         }
         map
@@ -159,4 +159,26 @@ fn noise(x: f32, y: f32) -> f32 {
     );
     let (u, v) = (xf * xf * (3.0 - 2.0 * xf), yf * yf * (3.0 - 2.0 * yf));
     (a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v) * 2.0 - 1.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every riverbed tile carries water: there is no dry carved row for
+    /// water to sneak around a dam through. (Regression: a player's dams
+    /// leaked because the bank row was carved to riverbed height.)
+    #[test]
+    fn riverbed_is_exactly_the_wet_channel() {
+        for seed in [0.0, 137.0, 645.0] {
+            let map = Map::generate_seeded(48, 48, seed);
+            for i in 0..map.ground.len() {
+                if map.ground[i] == 0 {
+                    assert!(map.water[i] > 0.0, "dry riverbed tile at {i} (seed {seed})");
+                }
+            }
+            assert!(map.source.iter().any(|s| *s), "river has a source");
+            assert!(map.drain.iter().any(|d| *d), "river has a drain");
+        }
+    }
 }

@@ -48,7 +48,7 @@ impl Plugin for IntroPlugin {
 fn intro_speed(state: Res<State<AppState>>, mut time: ResMut<Time<Virtual>>) {
     // The intro runs hot so things visibly happen; BB_FAST still overrides.
     if *state.get() == AppState::Intro && std::env::var("BB_FAST").is_err() {
-        time.set_relative_speed(3.0);
+        time.set_relative_speed(5.0);
     }
 }
 
@@ -137,8 +137,11 @@ fn reset_world(world: &mut World) {
 #[derive(Resource, Default)]
 struct Governor {
     cooldown: f32,
-    /// Pending road: tiles still to pave, one per action.
+    /// Pending road: tiles still to pave, one per beat.
     road: Vec<UVec2>,
+    /// A planned dam crossing: the full wet width of the river at a chosen
+    /// narrow point, built tile by tile like a real construction project.
+    dam_project: Vec<UVec2>,
     /// The most recent placement — a camera point of interest.
     last_built: Option<UVec2>,
 }
@@ -155,7 +158,7 @@ fn govern(
     mut map: ResMut<Map>,
     mut stockpile: ResMut<Stockpile>,
     population: Res<Population>,
-    buildings: Query<&Building>,
+    buildings: Query<(&Building, Has<UnderConstruction>)>,
     constructing: Query<(), With<UnderConstruction>>,
     trees: Query<&Tree>,
     forecast: Query<&AsyncValue<f32>>,
@@ -164,14 +167,48 @@ fn govern(
     if governor.cooldown > 0.0 {
         return;
     }
-    governor.cooldown = 2.5;
+    governor.cooldown = 2.0;
+
+    // Roads grow every beat, alongside whatever else is happening.
+    if let Some(tile) = governor.road.pop()
+        && stockpile.logs >= def(BuildingKind::Path).cost_logs
+        && placement_error(&map, BuildingKind::Path, tile).is_none()
+    {
+        place_building(
+            &mut commands,
+            &mut map,
+            &mut stockpile,
+            BuildingKind::Path,
+            tile,
+        );
+    }
+
     if constructing.iter().count() >= 2 {
         return;
     }
 
-    let count = |kind: BuildingKind| buildings.iter().filter(|b| b.kind == kind).count();
+    let count = |kind: BuildingKind| buildings.iter().filter(|(b, _)| b.kind == kind).count();
     let anchor = colony_anchor(&map, &buildings);
     let retention = forecast.iter().find_map(|v| v.ready().copied());
+
+    // A planned dam project takes precedence: finish the wall.
+    if let Some(&tile) = governor.dam_project.last() {
+        if stockpile.logs >= def(BuildingKind::Dam).cost_logs {
+            governor.dam_project.pop();
+            if placement_error(&map, BuildingKind::Dam, tile).is_none() {
+                place_building(
+                    &mut commands,
+                    &mut map,
+                    &mut stockpile,
+                    BuildingKind::Dam,
+                    tile,
+                );
+                governor.last_built = Some(tile);
+                info!("intro governor: dam wall segment at {tile}");
+            }
+        }
+        return;
+    }
 
     let choice = if count(BuildingKind::Lumberjack) == 0 {
         Some(BuildingKind::Lumberjack)
@@ -187,13 +224,25 @@ fn govern(
         Some(BuildingKind::Lumberjack)
     } else if population.count >= population.cap {
         Some(BuildingKind::Lodge)
-    } else if retention.is_some_and(|r| r < 0.4) && count(BuildingKind::Dam) < 2 {
-        // At most two dams: enough to hold a reserve without strangling the
-        // downstream flow the pumps drink from (a lesson the governor
-        // learned the hard way).
-        Some(BuildingKind::Dam)
-    } else if count(BuildingKind::Forester) == 0 && trees.iter().count() < 200 {
+    } else if retention.is_some_and(|r| r < 0.45) && count(BuildingKind::Dam) == 0 {
+        // Plan a real dam: pick a narrow crossing downstream of the colony
+        // and queue the full wet width as one project. (One reservoir only:
+        // over-damming strangles the downstream flow the pumps drink from —
+        // a lesson the governor learned the hard way.)
+        governor.dam_project = plan_dam_crossing(&map, anchor);
+        if !governor.dam_project.is_empty() {
+            info!(
+                "intro governor: planned a {}-tile dam at {:?}",
+                governor.dam_project.len(),
+                governor.dam_project
+            );
+        }
+        None
+    } else if count(BuildingKind::Forester) == 0 && trees.iter().count() < 240 {
         Some(BuildingKind::Forester)
+    } else if stockpile.logs > 45.0 {
+        // Prosperity: expand housing ahead of demand.
+        Some(BuildingKind::Lodge)
     } else {
         None
     };
@@ -214,39 +263,61 @@ fn govern(
             info!("intro governor: building {} at {tile}", def(kind).name);
             if matches!(
                 kind,
-                BuildingKind::Lumberjack | BuildingKind::WaterPump | BuildingKind::CarrotFarm
+                BuildingKind::Lumberjack
+                    | BuildingKind::WaterPump
+                    | BuildingKind::CarrotFarm
+                    | BuildingKind::Lodge
             ) {
-                governor.road = line_between(anchor, tile);
+                // Route the road like the beavers will walk it: A* that
+                // prefers existing paths, so roads merge into a network.
+                let grid = crate::sim::beavers::walk_grid(&map, &buildings);
+                if let Some(route) = crate::sim::pathfind::find_path(&grid, anchor, tile) {
+                    let mut road: Vec<UVec2> = route;
+                    road.pop(); // not the building tile itself
+                    road.reverse(); // pave outward from the colony
+                    governor.road = road;
+                }
             }
-        }
-        return;
-    }
-
-    // Idle beat: pave the next road tile, if any and affordable.
-    while let Some(tile) = governor.road.pop() {
-        if stockpile.logs < def(BuildingKind::Path).cost_logs {
-            governor.road.push(tile);
-            return;
-        }
-        if placement_error(&map, BuildingKind::Path, tile).is_none() {
-            place_building(
-                &mut commands,
-                &mut map,
-                &mut stockpile,
-                BuildingKind::Path,
-                tile,
-            );
-            return; // one tile per beat: roads grow visibly
         }
     }
 }
 
+/// Pick the narrowest river section in a band downstream of the colony and
+/// return its wet tiles (the dam wall), nearest-to-colony first.
+fn plan_dam_crossing(map: &Map, anchor: UVec2) -> Vec<UVec2> {
+    let mut best: Option<Vec<UVec2>> = None;
+    for dx in 4..(map.width as i32 / 2) {
+        for x in [anchor.x as i32 + dx, anchor.x as i32 - dx] {
+            if x < 0 || x as u32 >= map.width {
+                continue;
+            }
+            let wall: Vec<UVec2> = (0..map.height)
+                .map(|y| UVec2::new(x as u32, y))
+                .filter(|t| map.is_river_bed(t.x, t.y))
+                .filter(|t| placement_error(map, BuildingKind::Dam, *t).is_none())
+                .collect();
+            if wall.is_empty() || wall.len() > 3 {
+                continue; // no river here, or too wide to seal
+            }
+            // Contiguous?
+            let contiguous = wall.windows(2).all(|w| w[1].y - w[0].y == 1);
+            if contiguous && best.as_ref().is_none_or(|b| wall.len() < b.len()) {
+                best = Some(wall);
+            }
+        }
+        if best.is_some() {
+            break;
+        }
+    }
+    best.unwrap_or_default()
+}
+
 /// Where the colony "is": the first lodge, else the map center.
-fn colony_anchor(map: &Map, buildings: &Query<&Building>) -> UVec2 {
+fn colony_anchor(map: &Map, buildings: &Query<(&Building, Has<UnderConstruction>)>) -> UVec2 {
     buildings
         .iter()
-        .find(|b| b.kind == BuildingKind::Lodge)
-        .map(|b| b.tile)
+        .find(|(b, _)| b.kind == BuildingKind::Lodge)
+        .map(|(b, _)| b.tile)
         .unwrap_or(UVec2::new(map.width / 2, map.height / 2))
 }
 
@@ -274,27 +345,6 @@ fn find_spot(map: &Map, kind: BuildingKind, anchor: UVec2, trees: &Query<&Tree>)
     candidates
         .into_iter()
         .min_by_key(|t| t.as_ivec2().distance_squared(anchor.as_ivec2()))
-}
-
-/// Integer line between two tiles (excluding endpoints), reversed so
-/// `pop()` paves outward from the colony.
-fn line_between(from: UVec2, to: UVec2) -> Vec<UVec2> {
-    let (mut x, mut y) = (from.x as i32, from.y as i32);
-    let (tx, ty) = (to.x as i32, to.y as i32);
-    let mut tiles = Vec::new();
-    while (x, y) != (tx, ty) {
-        let (dx, dy) = (tx - x, ty - y);
-        if dx.abs() >= dy.abs() {
-            x += dx.signum();
-        } else {
-            y += dy.signum();
-        }
-        if (x, y) != (tx, ty) {
-            tiles.push(UVec2::new(x as u32, y as u32));
-        }
-    }
-    tiles.reverse();
-    tiles
 }
 
 // ---------------------------------------------------------------------------

@@ -414,7 +414,7 @@ fn hints() -> impl bevy::scene::Scene {
             left: px(10),
         }
         Children [(
-            Text("WASD pan · Q/E rotate · scroll zoom · click build · right-click cancel · Space pause · 1/2/3 speed")
+            Text("WASD pan · Q/E rotate · R/F or middle-drag tilt · scroll zoom · click build · right-click cancel · Space pause · 1/2/3 speed")
             TextFont { font_size: px(11) }
             TextColor(Color::srgba(1.0, 1.0, 1.0, 0.45))
         )]
