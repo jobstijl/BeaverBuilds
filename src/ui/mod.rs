@@ -6,7 +6,7 @@ use bevy_reactive_bsn::{
 
 use crate::AppState;
 use crate::chronicle::Chronicle;
-use crate::interact::{Selected, Tool};
+use crate::interact::{Notice, Selected, Tool};
 use crate::sim::beavers::StarvingCount;
 use crate::sim::buildings::{self, BUILDING_DEFS, Building, BuildingDef, UnderConstruction};
 use crate::sim::map::Map;
@@ -43,6 +43,32 @@ fn setup_ui(mut commands: Commands, state: Res<State<AppState>>) {
     root(&mut commands, hidden, info_panel());
     root(&mut commands, hidden, hints());
     root(&mut commands, hidden, chronicle_panel());
+    root(&mut commands, hidden, notice_banner());
+}
+
+/// Why-your-click-did-nothing feedback, fading after a couple of seconds.
+fn notice_banner() -> impl bevy::scene::Scene {
+    bsn! {
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(96),
+            left: px(0),
+            right: px(0),
+            justify_content: JustifyContent::Center,
+        }
+        reactive([Dep::resource::<Notice>()], |world: &World, _: Entity| {
+            let text = world
+                .resource::<Notice>()
+                .message
+                .clone()
+                .unwrap_or_default();
+            bsn! {
+                Text({ text })
+                TextFont { font_size: px(15) }
+                TextColor(Color::srgb(1.0, 0.5, 0.4))
+            }
+        })
+    }
 }
 
 fn show_hud(mut roots: Query<&mut Visibility, With<HudRoot>>) {
@@ -253,6 +279,7 @@ fn build_button(def: &'static BuildingDef) -> impl bevy::scene::Scene {
             border_radius: BorderRadius::all(px(6)),
         }
         on(move |_: On<Pointer<Click>>, mut tool: ResMut<Tool>| {
+            info!(target: "player", "tool: build {kind:?}");
             *tool = Tool::Build(kind);
         })
         // Background reacts to affordability and tool selection.
@@ -294,6 +321,7 @@ fn demolish_button() -> impl bevy::scene::Scene {
             border_radius: BorderRadius::all(px(6)),
         }
         on(move |_: On<Pointer<Click>>, mut tool: ResMut<Tool>| {
+            info!(target: "player", "tool: demolish");
             *tool = Tool::Demolish;
         })
         reactive([Dep::resource::<Tool>()], |world: &World, _: Entity| {

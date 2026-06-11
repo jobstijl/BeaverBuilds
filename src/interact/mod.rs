@@ -10,7 +10,7 @@ use crate::sim::map::Map;
 use bevy_reactive_bsn::{Dep, reactive};
 
 /// The player's active tool.
-#[derive(Resource, Default, Clone, Copy, PartialEq)]
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
 pub enum Tool {
     #[default]
     Select,
@@ -26,6 +26,13 @@ pub struct Hover(pub Option<UVec2>);
 #[derive(Resource, Default)]
 pub struct Selected(pub Option<Entity>);
 
+/// A short-lived on-screen notice (e.g. why a placement was rejected).
+#[derive(Resource, Default)]
+pub struct Notice {
+    pub message: Option<String>,
+    pub expires: f32,
+}
+
 pub struct InteractPlugin;
 
 impl Plugin for InteractPlugin {
@@ -33,10 +40,21 @@ impl Plugin for InteractPlugin {
         app.init_resource::<Tool>()
             .init_resource::<Hover>()
             .init_resource::<Selected>()
+            .init_resource::<Notice>()
             .add_systems(Startup, spawn_ghost)
-            .add_systems(Update, cancel_tool.run_if(in_state(AppState::Playing)))
+            .add_systems(
+                Update,
+                (cancel_tool, expire_notice).run_if(in_state(AppState::Playing)),
+            )
             .add_observer(track_hover)
             .add_observer(handle_click);
+    }
+}
+
+fn expire_notice(time: Res<Time<Real>>, mut notice: ResMut<Notice>) {
+    if notice.message.is_some() && time.elapsed_secs() > notice.expires {
+        notice.bypass_change_detection().message = None;
+        notice.set_changed();
     }
 }
 
@@ -94,14 +112,12 @@ fn handle_click(
     mut stockpile: ResMut<Stockpile>,
     mut tool: ResMut<Tool>,
     mut selected: ResMut<Selected>,
+    mut notice: ResMut<Notice>,
+    time: Res<Time<Real>>,
 ) {
     if *state.get() != AppState::Playing {
         return;
     }
-    // Clicks on multi-part buildings bubble from the part to the root; we
-    // resolve the root ourselves, so handle each click exactly once (a
-    // double-fired demolish refunded twice).
-    click.propagate(false);
     if click.button == PointerButton::Secondary {
         *tool = Tool::Select;
         selected.0 = None;
@@ -111,8 +127,14 @@ fn handle_click(
         return;
     }
     let target = click.entity;
+    debug!(target: "player", "click on {target} with {:?}", *tool);
 
     if let Some(root) = building_root(target, &buildings_q, &parents) {
+        // We resolved the root ourselves, so stop the bubble here: clicks on
+        // multi-part buildings would otherwise fire this observer again at
+        // the root (a double-fired demolish once refunded twice). UI clicks
+        // never reach this branch and keep bubbling to their buttons.
+        click.propagate(false);
         let building = buildings_q.get(root).unwrap();
         match *tool {
             Tool::Demolish => {
@@ -128,23 +150,37 @@ fn handle_click(
     }
 
     if let Ok(tile) = tiles.get(target) {
+        click.propagate(false);
         match *tool {
             Tool::Build(kind) => {
-                let affordable = stockpile.logs >= buildings::def(kind).cost_logs;
-                if affordable && buildings::placement_error(&map, kind, tile.0).is_none() {
-                    info!(target: "player", "placed {kind:?} at {}", tile.0);
-                    buildings::place_building(
-                        &mut commands,
-                        &mut map,
-                        &mut stockpile,
-                        kind,
-                        tile.0,
-                    );
+                let rejection = if stockpile.logs < buildings::def(kind).cost_logs {
+                    Some("not enough logs")
+                } else {
+                    buildings::placement_error(&map, kind, tile.0)
+                };
+                match rejection {
+                    None => {
+                        info!(target: "player", "placed {kind:?} at {}", tile.0);
+                        buildings::place_building(
+                            &mut commands,
+                            &mut map,
+                            &mut stockpile,
+                            kind,
+                            tile.0,
+                        );
+                    }
+                    Some(reason) => {
+                        info!(target: "player", "rejected {kind:?} at {}: {reason}", tile.0);
+                        notice.message = Some(format!("Can't build here: {reason}"));
+                        notice.expires = time.elapsed_secs() + 2.2;
+                    }
                 }
             }
             _ => selected.0 = None,
         }
     }
+    // Anything else (UI nodes, empty space): leave propagation alone so
+    // button observers up the hierarchy still fire.
 }
 
 /// The placement ghost: a translucent preview at the hovered tile whose
