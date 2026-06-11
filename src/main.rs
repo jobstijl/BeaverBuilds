@@ -102,8 +102,8 @@ fn debug_autobuild(
             });
         if let Some(tile) = spot {
             let entity = place_building(&mut commands, &mut map, &mut stockpile, kind, tile);
-            if kind == BuildingKind::Lodge {
-                // Exercise the info-panel rebuild reactor.
+            if kind == BuildingKind::Dam {
+                // Exercise the info panel + nested reservoir gauge.
                 selected.0 = Some(entity);
             }
             info!("autobuild: placed {kind:?} at {tile}");

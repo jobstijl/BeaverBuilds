@@ -143,6 +143,50 @@ pub fn forecast_drought_retention(
     water.iter().sum::<f32>() / before
 }
 
+/// Total water in the connected pool touching `start` (e.g. a dam's tile):
+/// a flood fill over wet tiles. Pure and owning — runs on the task pool for
+/// the selected-dam reservoir gauge.
+pub fn pooled_water_at(water: Vec<f32>, width: u32, height: u32, start: UVec2) -> f32 {
+    let idx = |x: u32, y: u32| (y * width + x) as usize;
+    let mut visited = vec![false; water.len()];
+    let mut queue = std::collections::VecDeque::new();
+    // Seed with the start tile and its neighbors (the dam tile itself may
+    // be dry on top while the pool laps against it).
+    let mut seed = vec![start];
+    seed.extend(
+        [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)]
+            .iter()
+            .filter_map(|(dx, dy)| {
+                let (x, y) = (start.x as i32 + dx, start.y as i32 + dy);
+                (x >= 0 && y >= 0 && (x as u32) < width && (y as u32) < height)
+                    .then(|| UVec2::new(x as u32, y as u32))
+            }),
+    );
+    for tile in seed {
+        let i = idx(tile.x, tile.y);
+        if water[i] > 0.05 && !visited[i] {
+            visited[i] = true;
+            queue.push_back(tile);
+        }
+    }
+    let mut total = 0.0;
+    while let Some(tile) = queue.pop_front() {
+        total += water[idx(tile.x, tile.y)];
+        for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+            let (x, y) = (tile.x as i32 + dx, tile.y as i32 + dy);
+            if x < 0 || y < 0 || x as u32 >= width || y as u32 >= height {
+                continue;
+            }
+            let i = idx(x as u32, y as u32);
+            if water[i] > 0.05 && !visited[i] {
+                visited[i] = true;
+                queue.push_back(UVec2::new(x as u32, y as u32));
+            }
+        }
+    }
+    total
+}
+
 fn flow_water(time: Res<Time>, mut map: ResMut<Map>, season: Res<Season>) {
     let dt = time.delta_secs();
     let map = &mut *map;

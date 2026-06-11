@@ -178,7 +178,12 @@ drives task handles to completion. The machinery also stands alone:
 `AsyncValue<T>` component for *plain systems* to consume — the validation
 game's beavers pathfind this way (A* on the task pool, waypoints read by
 the movement system), evidence that "async results are ordinary ECS state"
-is not a UI-shaped claim. (Bevy's in-flight `bevy_async` sync-point
+is not a UI-shaped claim. In-game usage, by consumption pattern: the
+drought forecast (one `reactive_async` producer read by the reactive HUD,
+by the intro governor — a plain system — and by the chronicle's bridged
+async task), the selected-dam reservoir gauge (a `reactive_async` nested
+inside a rebuild fragment, so selection changes cancel the in-flight
+measurement), and pathfinding (raw `AsyncSlot`, request-tagged). (Bevy's in-flight `bevy_async` sync-point
 bridge, PR #21744, composes with this rather than replacing it: bridges give
 async tasks *ECS access*; `reactive_async` gives reactive scenes *async
 values*.)

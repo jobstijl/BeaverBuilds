@@ -43,7 +43,12 @@ impl Plugin for IntroPlugin {
                     crate::sim::trees::scatter_initial_trees,
                     crate::sim::beavers::initial_colony,
                 )
-                    .chain(),
+                    .chain()
+                    // Only on RE-entry (intro click, game-over restart):
+                    // when booting straight into Playing (BB_SKIP_INTRO),
+                    // this initial OnEnter fires before PreStartup has even
+                    // loaded assets — Startup builds the first world.
+                    .run_if(resource_exists::<crate::render::TileEntities>),
             )
             .add_systems(OnEnter(AppState::GameOver), spawn_epitaph)
             .add_systems(

@@ -10,7 +10,7 @@ use crate::interact::{Notice, Selected, Tool};
 use crate::sim::beavers::StarvingCount;
 use crate::sim::buildings::{self, BUILDING_DEFS, Building, BuildingDef, UnderConstruction};
 use crate::sim::map::Map;
-use crate::sim::water::forecast_drought_retention;
+use crate::sim::water::{forecast_drought_retention, pooled_water_at};
 use crate::sim::{ForecastTick, Population, Season, Stockpile};
 
 /// All UI is declarative BSN: every dynamic part is a `reactive(..)` fragment
@@ -372,10 +372,10 @@ fn info_panel() -> impl bevy::scene::Scene {
                             let progress = world
                                 .get::<UnderConstruction>(e)
                                 .map(|uc| (uc.done / uc.required * 100.0).clamp(0.0, 99.0) as i32);
-                            (b.kind, progress)
+                            (b.kind, progress, b.tile)
                         })
                     });
-                    let Some((kind, progress)) = info else {
+                    let Some((kind, progress, tile)) = info else {
                         return Box::new(bsn! { Node { display: Display::None } })
                             as Box<dyn bevy::scene::Scene>;
                     };
@@ -391,6 +391,40 @@ fn info_panel() -> impl bevy::scene::Scene {
                     } else {
                         Color::srgb(0.5, 0.9, 0.5)
                     };
+                    // Dams get a reservoir gauge: the pool connected to the
+                    // wall, flood-filled on the task pool. Nested inside
+                    // this rebuild, so changing selection tears it down
+                    // (cancelling any in-flight measurement) and spawns a
+                    // fresh one for the new dam.
+                    let reservoir = (kind == buildings::BuildingKind::Dam
+                        && progress.is_none())
+                    .then(|| {
+                        reactive_async(
+                            [Dep::resource::<ForecastTick>()],
+                            move |world: &World, _| {
+                                let map = world.resource::<Map>();
+                                let water = map.water.clone();
+                                let (width, height) = (map.width, map.height);
+                                async move { pooled_water_at(water, width, height, tile) }
+                            },
+                            |_: &World, _: Entity, view: AsyncView<f32>| {
+                                let (text, alpha) = match view.ready() {
+                                    None => ("Measuring reservoir …".to_string(), 0.5),
+                                    Some(&held) => (
+                                        format!("Reservoir: {held:.0} water held"),
+                                        if view.refreshing { 0.55 } else { 1.0 },
+                                    ),
+                                };
+                                bsn! {
+                                    Text({ text })
+                                    TextFont { font_size: px(13) }
+                                    TextColor({
+                                        Color::srgb(0.55, 0.75, 1.0).with_alpha(alpha)
+                                    })
+                                }
+                            },
+                        )
+                    });
                     Box::new(bsn! {
                         Node {
                             display: Display::Flex,
@@ -419,6 +453,7 @@ fn info_panel() -> impl bevy::scene::Scene {
                                 TextFont { font_size: px(12) }
                                 TextColor(Color::srgb(0.75, 0.78, 0.72))
                             ),
+                            ( { reservoir } ),
                         ]
                 }) as Box<dyn bevy::scene::Scene>
             },
