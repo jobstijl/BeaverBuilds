@@ -92,10 +92,13 @@ A fourth, *derived* primitive shows the model extends to async:
 `reactive_async(deps, compute, render)` — deps change → a future runs on the
 `AsyncComputeTaskPool` → the result lands as an ordinary `AsyncValue<T>`
 component → a child fragment (watching it via `Dep::parent`) renders it.
-Suspense is the `Pending` render arm; stale-while-revalidate is the default
-(retained-mode UI keeps the old value rendered until the new result lands);
-cancellation is dropping the replaced task handle. Notably, the layer's own
-write contract dictated the shape: the launcher lives on the parent and the
+Fallbacks are the `Pending` render arm; the last good value keeps rendering
+while a recomputation is in flight, with a `refreshing` flag in the render
+view so stale data is marked rather than silently trusted; cancellation is
+dropping the replaced task handle. Consumers for whom request identity
+matters tag results in `T` (the game's pathfinding embeds the job entity)
+instead of relying on last-good-value. Notably, the layer's own write
+contract dictated the shape: the launcher lives on the parent and the
 renderer on a child, because a child must not write its parent.
 
 ### Dependencies
