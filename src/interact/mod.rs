@@ -1,4 +1,6 @@
 use bevy::picking::pointer::PointerButton;
+
+use crate::AppState;
 use bevy::prelude::*;
 
 use crate::render::{GameAssets, Tile, building_size};
@@ -32,7 +34,7 @@ impl Plugin for InteractPlugin {
             .init_resource::<Hover>()
             .init_resource::<Selected>()
             .add_systems(Startup, spawn_ghost)
-            .add_systems(Update, cancel_tool)
+            .add_systems(Update, cancel_tool.run_if(in_state(AppState::Playing)))
             .add_observer(track_hover)
             .add_observer(handle_click);
     }
@@ -49,7 +51,15 @@ fn cancel_tool(
     }
 }
 
-fn track_hover(moved: On<Pointer<Move>>, tiles: Query<&Tile>, mut hover: ResMut<Hover>) {
+fn track_hover(
+    moved: On<Pointer<Move>>,
+    state: Res<State<AppState>>,
+    tiles: Query<&Tile>,
+    mut hover: ResMut<Hover>,
+) {
+    if *state.get() != AppState::Playing {
+        return;
+    }
     if let Ok(tile) = tiles.get(moved.entity)
         && hover.0 != Some(tile.0)
     {
@@ -75,6 +85,7 @@ fn building_root(
 #[allow(clippy::too_many_arguments)]
 fn handle_click(
     click: On<Pointer<Click>>,
+    state: Res<State<AppState>>,
     mut commands: Commands,
     tiles: Query<&Tile>,
     buildings_q: Query<&Building>,
@@ -84,6 +95,9 @@ fn handle_click(
     mut tool: ResMut<Tool>,
     mut selected: ResMut<Selected>,
 ) {
+    if *state.get() != AppState::Playing {
+        return;
+    }
     if click.button == PointerButton::Secondary {
         *tool = Tool::Select;
         selected.0 = None;
@@ -98,6 +112,7 @@ fn handle_click(
         let building = buildings_q.get(root).unwrap();
         match *tool {
             Tool::Demolish => {
+                info!(target: "player", "demolished {:?} at {}", building.kind, building.tile);
                 buildings::demolish(&mut commands, &mut map, &mut stockpile, root, building);
                 if selected.0 == Some(root) {
                     selected.0 = None;
@@ -113,6 +128,7 @@ fn handle_click(
             Tool::Build(kind) => {
                 let affordable = stockpile.logs >= buildings::def(kind).cost_logs;
                 if affordable && buildings::placement_error(&map, kind, tile.0).is_none() {
+                    info!(target: "player", "placed {kind:?} at {}", tile.0);
                     buildings::place_building(
                         &mut commands,
                         &mut map,

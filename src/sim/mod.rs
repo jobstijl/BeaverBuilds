@@ -74,7 +74,10 @@ impl Plugin for SimPlugin {
             buildings::BuildingsPlugin,
             beavers::BeaversPlugin,
         ))
-        .add_systems(Update, game_speed_hotkeys);
+        .add_systems(
+            Update,
+            game_speed_hotkeys.run_if(in_state(crate::AppState::Playing)),
+        );
     }
 }
 
@@ -156,6 +159,8 @@ mod tests {
             )))
             // No input plugin headless; the speed-hotkey system wants it.
             .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins(bevy::state::app::StatesPlugin)
+            .insert_state(crate::AppState::Playing)
             .add_plugins(bevy_reactive_bsn::ReactiveBsnPlugin)
             .add_plugins(SimPlugin);
         app.update(); // Startup: map, trees, the initial colony.

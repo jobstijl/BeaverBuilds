@@ -42,7 +42,9 @@ pub struct GameAssets {
     pub capsule: Handle<Mesh>,
     // Palette.
     pub grass: Handle<StandardMaterial>,
+    pub grass_alt: Handle<StandardMaterial>,
     pub grass_dry: Handle<StandardMaterial>,
+    pub grass_dry_alt: Handle<StandardMaterial>,
     pub river_bed: Handle<StandardMaterial>,
     pub water: Handle<StandardMaterial>,
     pub wood: Handle<StandardMaterial>,
@@ -91,7 +93,9 @@ fn load_assets(
         sphere: meshes.add(Sphere::new(0.5)),
         capsule: meshes.add(Capsule3d::new(0.5, 0.6)),
         grass: solid(m, Color::srgb(0.4, 0.62, 0.3)),
+        grass_alt: solid(m, Color::srgb(0.37, 0.585, 0.285)),
         grass_dry: solid(m, Color::srgb(0.74, 0.64, 0.4)),
+        grass_dry_alt: solid(m, Color::srgb(0.705, 0.61, 0.375)),
         river_bed: solid(m, Color::srgb(0.8, 0.72, 0.54)),
         water: m.add(StandardMaterial {
             base_color: Color::srgba(0.2, 0.5, 0.85, 0.62),
@@ -156,7 +160,7 @@ pub fn building_size(kind: BuildingKind) -> Vec3 {
     }
 }
 
-fn spawn_terrain(mut commands: Commands, map: Res<Map>, assets: Res<GameAssets>) {
+pub fn spawn_terrain(mut commands: Commands, map: Res<Map>, assets: Res<GameAssets>) {
     let n = (map.width * map.height) as usize;
     let mut entities = TileEntities {
         ground: Vec::with_capacity(n),
@@ -170,10 +174,16 @@ fn spawn_terrain(mut commands: Commands, map: Res<Map>, assets: Res<GameAssets>)
         |world: &World, entity: Entity| {
             let assets = world.resource::<GameAssets>();
             let irrigated = world.get::<TileState>(entity).is_some_and(|t| t.irrigated);
-            let mat = if irrigated {
-                assets.grass.clone()
-            } else {
-                assets.grass_dry.clone()
+            // Checkered two-tone grass; the alternate shade follows the
+            // tile's parity so the pattern survives tint flips.
+            let alt = world
+                .get::<Tile>(entity)
+                .is_some_and(|t| (t.0.x + t.0.y) % 2 == 1);
+            let mat = match (irrigated, alt) {
+                (true, false) => assets.grass.clone(),
+                (true, true) => assets.grass_alt.clone(),
+                (false, false) => assets.grass_dry.clone(),
+                (false, true) => assets.grass_dry_alt.clone(),
             };
             bsn! { MeshMaterial3d::<StandardMaterial>({ mat }) }
         },
@@ -186,6 +196,8 @@ fn spawn_terrain(mut commands: Commands, map: Res<Map>, assets: Res<GameAssets>)
             let height = (ground as f32 * LEVEL).max(0.12);
             let material = if ground == 0 {
                 assets.river_bed.clone()
+            } else if (x + y) % 2 == 1 {
+                assets.grass_alt.clone()
             } else {
                 assets.grass.clone()
             };
@@ -332,6 +344,15 @@ fn dress_tree(
     let entity = add.entity;
     let Ok(tree) = trees.get(entity) else { return };
     let pos = map.tile_center(tree.tile.x, tree.tile.y);
+    // Per-tree jitter (deterministic from the tile) so the forest reads
+    // organic rather than stamped.
+    let hash = tree
+        .tile
+        .x
+        .wrapping_mul(31)
+        .wrapping_add(tree.tile.y.wrapping_mul(17));
+    let spin = Quat::from_rotation_y((hash % 628) as f32 / 100.0);
+    let size = 0.88 + (hash % 25) as f32 / 100.0;
     let trunk = assets.cylinder.clone();
     let trunk_mat = assets.wood_dark.clone();
     let canopy = assets.sphere.clone();
@@ -339,15 +360,21 @@ fn dress_tree(
     let leaf = assets.leaf[((tree.tile.x * 7 + tree.tile.y * 13) % 3) as usize].clone();
     let leaf2 = leaf.clone();
     commands.entity(entity).apply_scene(bsn! {
-        template_value(Transform::from_translation(pos).with_scale(Vec3::splat(0.05)))
+        template_value(
+            Transform::from_translation(pos)
+                .with_rotation(spin)
+                .with_scale(Vec3::splat(0.05))
+        )
         Visibility
         template_value(Pickable::IGNORE)
         reactive([Dep::this::<Tree>()], move |world: &World, entity: Entity| {
             let growth = world.get::<Tree>(entity).map(|t| t.growth).unwrap_or(0.0);
-            let scale = 0.25 + 0.75 * growth;
+            let scale = (0.25 + 0.75 * growth) * size;
             bsn! {
                 template_value(
-                    Transform::from_translation(pos).with_scale(Vec3::splat(scale))
+                    Transform::from_translation(pos)
+                        .with_rotation(spin)
+                        .with_scale(Vec3::splat(scale))
                 )
             }
         })

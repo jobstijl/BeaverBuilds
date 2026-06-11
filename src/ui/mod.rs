@@ -4,6 +4,7 @@ use bevy_reactive_bsn::{
     AsyncValue, Dep, keyed, reactive, reactive_async, reactive_list, reactive_rebuild,
 };
 
+use crate::AppState;
 use crate::chronicle::Chronicle;
 use crate::interact::{Selected, Tool};
 use crate::sim::beavers::StarvingCount;
@@ -18,17 +19,36 @@ pub struct GameUiPlugin;
 
 impl Plugin for GameUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_ui);
+        app.add_systems(Startup, setup_ui)
+            .add_systems(OnEnter(AppState::Playing), show_hud);
     }
 }
 
-fn setup_ui(mut commands: Commands) {
-    commands.spawn_scene(top_bar());
-    commands.spawn_scene(warnings());
-    commands.spawn_scene(build_menu());
-    commands.spawn_scene(info_panel());
-    commands.spawn_scene(hints());
-    commands.spawn_scene(chronicle_panel());
+/// Marks HUD roots so the intro can keep them hidden until the game starts.
+#[derive(Component)]
+struct HudRoot;
+
+fn setup_ui(mut commands: Commands, state: Res<State<AppState>>) {
+    let hidden = *state.get() == AppState::Intro;
+    fn root(commands: &mut Commands, hidden: bool, scene: impl bevy::scene::Scene) {
+        let mut entity = commands.spawn_scene(scene);
+        entity.insert(HudRoot);
+        if hidden {
+            entity.insert(Visibility::Hidden);
+        }
+    }
+    root(&mut commands, hidden, top_bar());
+    root(&mut commands, hidden, warnings());
+    root(&mut commands, hidden, build_menu());
+    root(&mut commands, hidden, info_panel());
+    root(&mut commands, hidden, hints());
+    root(&mut commands, hidden, chronicle_panel());
+}
+
+fn show_hud(mut roots: Query<&mut Visibility, With<HudRoot>>) {
+    for mut visibility in &mut roots {
+        *visibility = Visibility::Visible;
+    }
 }
 
 const PANEL_BG: Color = Color::srgba(0.08, 0.1, 0.08, 0.88);
@@ -186,7 +206,10 @@ fn warnings() -> impl bevy::scene::Scene {
 
 fn warning_badge(text: String, color: Color) -> impl bevy::scene::Scene {
     bsn! {
-        Node { padding: UiRect::axes(px(10), px(4)) }
+        Node {
+            padding: UiRect::axes(px(10), px(4)),
+            border_radius: BorderRadius::all(px(5)),
+        }
         BackgroundColor(Color::srgba(0.15, 0.05, 0.02, 0.85))
         Children [(
             Text({ text })

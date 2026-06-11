@@ -49,21 +49,22 @@ right-click/Esc cancel · click a building to inspect · Space pause · 1/2/3 ga
 ## Running it
 
 ```sh
-cargo run                 # play it yourself (dev profile is tuned for iteration)
-BB_DEMO=1 cargo run       # attract mode: a scripted governor plays the colony
+cargo run                 # opens on the cinematic intro; click to start playing
 cargo run --release       # full optimization
 ```
 
-In demo mode the governor takes one deliberate action every few seconds — bootstraps a
-lumberjack/pump/farm, adds lodges as housing fills, **dams the river when the async
-drought forecast dips below 40%**, paves roads tile-by-tile toward new buildings — while
-the camera orbits slowly. You can still take the controls at any time.
+The game opens as a **letterboxed cinematic intro**: a scripted governor plays a colony
+at speed — bootstrapping a lumberjack/pump/farm, housing the population, **damming the
+river when the async drought forecast dips below 40%**, paving roads tile-by-tile —
+while the camera glides between points of interest. **Click (or Space/Enter) to take
+command**: the demo world is torn down and a fresh colony starts on a brand-new map.
 
 Optional environment variables (combinable):
 
 | variable | effect |
 |---|---|
-| `BB_DEMO=1` | scripted governor + orbiting camera (attract mode) |
+| `BB_SKIP_INTRO=1` | boot straight into the game (no intro) |
+| `BB_INTRO_SECS=n` | auto-start the game after n seconds of intro (CI/agent runs) |
 | `BB_FAST=1` | start at 4× game speed |
 | `BB_AUTOBUILD=1` | instantly place one of each building at startup (test rig) |
 | `BB_SHOT=/path/prefix` | numbered screenshot every 10 s and on F12 |

@@ -31,6 +31,10 @@ pub struct Map {
 
 impl Map {
     pub fn generate(width: u32, height: u32) -> Self {
+        Self::generate_seeded(width, height, 0.0)
+    }
+
+    pub fn generate_seeded(width: u32, height: u32, seed: f32) -> Self {
         let n = (width * height) as usize;
         let mut map = Self {
             width,
@@ -49,8 +53,8 @@ impl Map {
         for y in 0..height {
             for x in 0..width {
                 let h = 1.0
-                    + 1.6 * noise(x as f32 * 0.09, y as f32 * 0.09)
-                    + 0.8 * noise(x as f32 * 0.23 + 31.0, y as f32 * 0.23 + 17.0);
+                    + 1.6 * noise(x as f32 * 0.09 + seed * 3.7, y as f32 * 0.09 + seed * 1.3)
+                    + 0.8 * noise(x as f32 * 0.23 + 31.0 + seed, y as f32 * 0.23 + 17.0);
                 let i = map.idx(x, y);
                 map.ground[i] = h.round().clamp(1.0, 4.0) as i32;
             }
@@ -58,8 +62,9 @@ impl Map {
 
         // Carve a meandering river (west to east), 2 tiles wide, at level 0.
         for x in 0..width {
-            let center =
-                (height as f32 / 2.0 + (x as f32 * 0.18).sin() * (height as f32 * 0.14)) as i32;
+            let center = (height as f32 / 2.0
+                + (x as f32 * 0.18 + seed * 0.61).sin() * (height as f32 * 0.14))
+                as i32;
             for dy in -1..=1 {
                 let y = (center + dy).clamp(0, height as i32 - 1) as u32;
                 let i = map.idx(x, y);

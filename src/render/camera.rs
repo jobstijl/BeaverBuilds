@@ -13,7 +13,14 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraRig>()
             .add_systems(Startup, spawn_camera)
-            .add_systems(Update, (drive_camera, apply_camera).chain());
+            .add_systems(
+                Update,
+                (
+                    drive_camera.run_if(in_state(crate::AppState::Playing)),
+                    apply_camera,
+                )
+                    .chain(),
+            );
     }
 }
 

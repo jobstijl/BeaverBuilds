@@ -98,7 +98,7 @@ pub fn spawn_beaver(commands: &mut Commands, pos: Vec3) {
     commands.spawn((Beaver::default(), Transform::from_translation(pos)));
 }
 
-fn initial_colony(mut commands: Commands, map: Res<Map>) {
+pub fn initial_colony(mut commands: Commands, map: Res<Map>) {
     // Start with three beavers on free land closest to the map center.
     let center = UVec2::new(map.width / 2, map.height / 2);
     let mut spawned = 0;

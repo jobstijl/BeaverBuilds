@@ -35,7 +35,7 @@ pub fn spawn_tree(commands: &mut Commands, map: &mut Map, tile: UVec2, growth: f
     map.tree[i] = Some(entity);
 }
 
-fn scatter_initial_trees(mut commands: Commands, mut map: ResMut<Map>) {
+pub fn scatter_initial_trees(mut commands: Commands, mut map: ResMut<Map>) {
     // Deterministic scatter on free land, denser near the river.
     let (w, h) = (map.width, map.height);
     for y in 0..h {

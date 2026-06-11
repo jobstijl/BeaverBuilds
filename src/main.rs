@@ -1,14 +1,23 @@
 mod bench;
 mod bridge;
 mod chronicle;
-mod demo;
 mod interact;
+mod intro;
 mod render;
 mod sim;
 mod ui;
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+
+/// The game starts as a self-playing cinematic intro; any click (or
+/// Space/Enter) tears it down and starts a fresh colony for the player.
+#[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum AppState {
+    #[default]
+    Intro,
+    Playing,
+}
 
 /// `BB_FAST=1` starts the game at 4x speed (combinable with any mode).
 fn apply_speed_env(mut time: ResMut<Time<Virtual>>) {
@@ -31,11 +40,16 @@ fn main() {
             ..default()
         }))
         .add_plugins(MeshPickingPlugin)
+        .insert_state(if std::env::var("BB_SKIP_INTRO").is_ok() {
+            AppState::Playing
+        } else {
+            AppState::Intro
+        })
         .add_plugins((
             bevy_reactive_bsn::ReactiveBsnPlugin,
             bridge::BridgePlugin,
             chronicle::ChroniclePlugin,
-            demo::DemoPlugin,
+            intro::IntroPlugin,
             sim::SimPlugin,
             render::RenderPlugin,
             interact::InteractPlugin,
