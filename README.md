@@ -153,6 +153,7 @@ tiles instead of "the whole map changed every tick".
 | 10k patch reactors, 100 dirty/frame | 0.50 | ~0.8 µs/update |
 | 10k patch reactors, all dirty every frame | 3.2 | ~280 ns/apply |
 | 1k `Dep::components` watchers over 10k entities, idle | 0.11 | one shared scan |
+| 10k value-projection deps, noisy resource, stable value | 0.48 | ≈ idle floor |
 | baseline: plain `Changed<T>` system (10k, idle / all dirty) | 0.06 / 0.07 | ~6 ns/entity |
 
 Reading: idle dirty-checks cost ~42 ns/reactor (≈7× the raw ECS floor — the price of the

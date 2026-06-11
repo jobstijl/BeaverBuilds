@@ -873,3 +873,100 @@ fn async_recompute_replaces_ready_value() {
     app.world_mut().resource_mut::<Score>().0 = 3;
     update_until_label(&mut app, child, 3);
 }
+
+// ---------------------------------------------------------------------------
+// Value projections: per-field wake granularity
+// ---------------------------------------------------------------------------
+
+#[test]
+fn resource_value_wakes_only_when_projection_changes() {
+    let mut app = app();
+    let (runs, run_count) = counter();
+    app.world_mut().spawn(Reactor::patch(
+        [Dep::resource_value(|s: &Score| s.0 / 10)],
+        move |_: &World, _| {
+            runs.fetch_add(1, Ordering::SeqCst);
+            bsn! { Label(0) }
+        },
+    ));
+    app.update();
+    assert_eq!(run_count(), 1);
+
+    app.world_mut().resource_mut::<Score>().0 = 7; // projection still 0
+    app.update();
+    assert_eq!(run_count(), 1, "resource ticked but projection unchanged");
+
+    app.world_mut().resource_mut::<Score>().0 = 15; // projection now 1
+    app.update();
+    assert_eq!(run_count(), 2, "projection change wakes");
+}
+
+#[test]
+fn resource_value_projection_is_tick_gated() {
+    let mut app = app();
+    let (projections, projection_count) = counter();
+    app.world_mut().spawn(Reactor::patch(
+        [Dep::resource_value(move |s: &Score| {
+            projections.fetch_add(1, Ordering::SeqCst);
+            s.0 / 10
+        })],
+        |_: &World, _| bsn! { Label(0) },
+    ));
+    app.update();
+    let after_first = projection_count();
+    assert!(after_first >= 1);
+
+    // Quiet resource: the projection must not run at all.
+    app.update();
+    app.update();
+    assert_eq!(
+        projection_count(),
+        after_first,
+        "quiet resources must cost one tick compare, not a projection"
+    );
+
+    // Noisy resource, stable projection: exactly one more projection per
+    // change, and (per the previous test) no reactor wake.
+    app.world_mut().resource_mut::<Score>().0 = 3;
+    app.update();
+    assert_eq!(projection_count(), after_first + 1);
+}
+
+#[test]
+fn this_value_projects_own_component() {
+    let mut app = app();
+    let (runs, run_count) = counter();
+    let entity = app
+        .world_mut()
+        .spawn((
+            Value(0),
+            Reactor::patch(
+                [Dep::this_value(|v: &Value| v.0 / 10)],
+                move |world: &World, e| {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    let bucket = world.get::<Value>(e).map(|v| v.0 / 10).unwrap_or(0);
+                    bsn! { Label({ bucket }) }
+                },
+            ),
+        ))
+        .id();
+    app.update();
+    assert_eq!(run_count(), 1);
+
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<Value>()
+        .unwrap()
+        .0 = 9;
+    app.update();
+    assert_eq!(run_count(), 1, "same bucket, no wake");
+
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<Value>()
+        .unwrap()
+        .0 = 25;
+    app.update();
+    assert_eq!(run_count(), 2);
+    assert_eq!(app.world().get::<Label>(entity), Some(&Label(2)));
+}

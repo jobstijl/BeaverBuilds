@@ -289,7 +289,9 @@ fn spawn_lights(mut commands: Commands) {
     // light itself is a reactive function of the season, declared inline.
     commands.spawn_scene(bsn! {
         template_value(Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, 0.7, 0.0)))
-        reactive([Dep::resource::<Season>()], |world: &World, _: Entity| {
+        reactive(
+            [Dep::resource_value(|s: &Season| s.drought)],
+            |world: &World, _: Entity| {
             let drought = world.resource::<Season>().drought;
             let (color, lux) = if drought {
                 (Color::srgb(1.0, 0.82, 0.55), 14_000.0)
@@ -303,7 +305,8 @@ fn spawn_lights(mut commands: Commands) {
                     shadow_maps_enabled: true,
                 }
             }
-        })
+        },
+        )
     });
     // Cool fill from the opposite side so shadowed faces aren't flat black.
     commands.spawn((

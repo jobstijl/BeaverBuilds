@@ -101,6 +101,7 @@ renderer on a child, because a child must not write its parent.
 | constructor | wakes on |
 |---|---|
 | `Dep::resource::<R>()` | resource change/insert/remove |
+| `Dep::resource_value(\|r: &R\| …)` / `Dep::this_value` | a *projection* changed value (tick-gated; per-field wakes today) |
 | `Dep::this::<T>()` / `Dep::entity::<T>(e)` | `T` on one entity, incl. insert/remove |
 | `Dep::presence::<T>(e)` | insert/remove only (pair a rebuild-on-presence with a patch-on-value) |
 | `Dep::parent::<T>()` | `T` on the entity's `ChildOf` parent (child fragments rendering parent-owned state) |
@@ -197,6 +198,7 @@ hardcoded exemption.
 | 10k patch reactors, 100 dirty/frame | 0.50 | ~0.8 µs/update |
 | 10k patch reactors, all dirty | 3.2 | ~280 ns/apply |
 | 1k whole-world watchers over 10k entities, idle | 0.11 | one shared scan |
+| 10k value-projection deps, noisy resource, stable value | 0.48 | ≈ idle floor |
 | baseline `Changed<T>` system, 10k entities | 0.06 | ~6 ns/entity |
 
 The idle check is ~7× the raw ECS floor; at realistic scales (a few
@@ -216,7 +218,7 @@ is no push channel for mutations, and we argue below there shouldn't be.
   (every few seconds, or when a dam appears) and the retention percentage
   renders reactively. Continuous motion and the live water cellular
   automaton remain plain systems — the boundary held up well in practice.
-- **26 behavioral tests** (headless) pin the semantics: exactly one run per
+- **29 behavioral tests** (headless) pin the semantics: exactly one run per
   change (no spurious wakes), in-place merging preserves foreign components,
   presence ignores mutations, population changes wake whole-world deps,
   rebuild despawns old subtrees, list survivors keep their entities, chains
@@ -232,6 +234,8 @@ is no push channel for mutations, and we argue below there shouldn't be.
   order with surviving entities, duplicate list keys collapse with a
   warning, and a second inline reactor on one entity fails loudly at spawn
   (duplicate-component panic) rather than silently replacing the first.
+  Value projections wake only on projected-value change and provably skip
+  projecting while the source is quiet (tick-gating).
 
 ## What this validates from #14437 — and what it challenges
 
@@ -250,11 +254,24 @@ path. We'd encourage upstream reactivity to stay pull-based.
 
 ## What needs Bevy (the actual upstream asks)
 
-1. **Per-field invalidation** — the one thing a layer cannot do. It needs
-   (a) field-level change metadata (change detection is per-component) and
-   (b) resolved BSN patches retaining which fields each patch sets, so an
-   invalidation can re-apply a single field. Everything else in this design
-   survives that addition unchanged — patches just get smaller.
+1. **Per-field invalidation** — partially within reach today, and the
+   reachable half is validated here rather than assumed. The *wake* half is
+   expressible as tick-gated value projections:
+   `Dep::resource_value(|s: &Season| s.remaining.ceil() as u32)` wakes a
+   reactor only when the projected value changes; quiet sources cost one
+   tick compare, noisy sources with stable projections cost one projection
+   + `PartialEq` (three tests pin the semantics; in the validation game the
+   calendar re-renders once per displayed second while the underlying field
+   ticks every frame — with the simulation writing naturally, no derived
+   resources, no `bypass_change_detection`). What the projection costs — a
+   cached `PartialEq` value and a hand-written lens — is precisely what
+   upstream support would eliminate: (a) field-level dirty metadata in
+   change detection, (b) automatic inference of which fields a patch reads
+   (no manual lens), and (c) partial re-application of resolved patches.
+   Those three are **not validated here and cannot be from outside** — they
+   are the experiment upstream would run. That the layer gained per-field
+   wakes without touching anything else is itself evidence for the claim
+   that the rest of the design is agnostic to how fine the dirty bits get.
 2. *(Optional)* a `bsn!`-native reactive entry. We expected to need one; we
    didn't — scene-function includes already compose `reactive(...)`
    naturally, with full IDE support. A dedicated syntax would only add

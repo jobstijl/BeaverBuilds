@@ -57,7 +57,16 @@ pub fn run_benchmarks() {
         1_000,
     );
 
-    // 5/6. Baseline: identical update work as a plain Changed<T> system.
+    // 5. Value projections: the resource ticks every frame but the
+    //    projected value never changes — measures the per-field-wake cost.
+    let ms = bench_value_projections(n);
+    row(
+        "10k value-projection deps, noisy resource, stable value",
+        ms,
+        n,
+    );
+
+    // 6/7. Baseline: identical update work as a plain Changed<T> system.
     let ms = bench_baseline(n, 0);
     row(
         "baseline: plain Changed<T> system, 10k entities, idle",
@@ -134,6 +143,30 @@ fn bench_watchers(entities: usize, watchers: usize) -> f64 {
         bsn! { Label(0) }
     });
     for _ in 0..watchers {
+        app.world_mut().spawn(Reactor::from_spec(spec.clone()));
+    }
+    measure(&mut app)
+}
+
+#[derive(Resource, Default)]
+struct Noisy(u64);
+
+/// N reactors with a tick-gated projection dep over a resource that is
+/// written every frame while the projection stays constant: the worst case
+/// for projection cost, the best case for avoided re-renders.
+fn bench_value_projections(n: usize) -> f64 {
+    let mut app = base_app(0);
+    app.add_plugins(ReactiveBsnPlugin)
+        .init_resource::<Noisy>()
+        .add_systems(
+            Update,
+            (|mut noisy: ResMut<Noisy>| noisy.0 = noisy.0.wrapping_add(1)).before(ReactSet),
+        );
+    let spec = ReactorSpec::patch(
+        [Dep::resource_value(|noisy: &Noisy| noisy.0 / u64::MAX)],
+        |_: &World, _: Entity| bsn! { Label(0) },
+    );
+    for _ in 0..n {
         app.world_mut().spawn(Reactor::from_spec(spec.clone()));
     }
     measure(&mut app)

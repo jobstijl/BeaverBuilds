@@ -61,10 +61,14 @@ impl Target {
 }
 
 /// Per-reactor-instance mutable state for one dependency.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(crate) struct DepState {
     existed: Option<bool>,
     count: Option<usize>,
+    /// Cached projection result for value deps, type-erased.
+    cache: Option<Box<dyn std::any::Any + Send + Sync>>,
+    /// Tick of the last projection, so quiet sources skip projecting.
+    seen: Tick,
 }
 
 /// Everything a dependency check may need.
@@ -308,6 +312,96 @@ impl<S: RelationshipTarget, T: Component> DepSpec for RelatedComponentsDep<S, T>
 }
 
 // ---------------------------------------------------------------------------
+// Value-projection dependencies: per-field wake granularity, today
+// ---------------------------------------------------------------------------
+
+/// Wakes only when a *projection* of a resource changes value. The
+/// projection is tick-gated: it runs only when the resource's component
+/// tick advanced, so quiet resources cost one tick compare and noisy
+/// resources with stable projections cost one projection + `PartialEq`.
+struct ResourceValueDep<R, V, F> {
+    project: F,
+    _marker: std::marker::PhantomData<fn() -> (R, V)>,
+}
+
+impl<R, V, F> DepSpec for ResourceValueDep<R, V, F>
+where
+    R: Resource,
+    V: PartialEq + Send + Sync + 'static,
+    F: Fn(&R) -> V + Send + Sync,
+{
+    fn check(&self, cx: &mut DepCx, state: &mut DepState) -> bool {
+        clamp_tick(&mut state.seen, cx.this_run);
+        let Some(res) = cx.world.get_resource_ref::<R>() else {
+            // Resource vanished: dirty once, then quiet.
+            return state.cache.take().is_some();
+        };
+        if state.cache.is_some() && !res.last_changed().is_newer_than(state.seen, cx.this_run) {
+            return false;
+        }
+        state.seen = cx.this_run;
+        let value = (self.project)(&res);
+        match state.cache.as_ref().and_then(|c| c.downcast_ref::<V>()) {
+            Some(old) if *old == value => false,
+            _ => {
+                state.cache = Some(Box::new(value));
+                true
+            }
+        }
+    }
+
+    fn describe(&self) -> String {
+        format!("projected value of resource {}", short_name::<R>())
+    }
+}
+
+/// Like [`ResourceValueDep`], over a component on the reactor's own entity.
+struct ThisValueDep<T, V, F> {
+    project: F,
+    _marker: std::marker::PhantomData<fn() -> (T, V)>,
+}
+
+impl<T, V, F> DepSpec for ThisValueDep<T, V, F>
+where
+    T: Component,
+    V: PartialEq + Send + Sync + 'static,
+    F: Fn(&T) -> V + Send + Sync,
+{
+    fn check(&self, cx: &mut DepCx, state: &mut DepState) -> bool {
+        clamp_tick(&mut state.seen, cx.this_run);
+        let entity = cx.world.get_entity(cx.this).ok();
+        let ticks = entity.as_ref().and_then(|e| e.get_change_ticks::<T>());
+        let (Some(entity), Some(ticks)) = (entity, ticks) else {
+            return state.cache.take().is_some();
+        };
+        if state.cache.is_some() && !ticks.is_changed(state.seen, cx.this_run) {
+            return false;
+        }
+        state.seen = cx.this_run;
+        let value = (self.project)(entity.get::<T>().unwrap());
+        match state.cache.as_ref().and_then(|c| c.downcast_ref::<V>()) {
+            Some(old) if *old == value => false,
+            _ => {
+                state.cache = Some(Box::new(value));
+                true
+            }
+        }
+    }
+
+    fn describe(&self) -> String {
+        format!("projected value of component {}", short_name::<T>())
+    }
+
+    fn maybe_affected(&self, written: &EntityHashSet, this: Entity) -> bool {
+        written.contains(&this)
+    }
+
+    fn watched_type(&self) -> Option<TypeId> {
+        Some(TypeId::of::<T>())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------
 
@@ -318,6 +412,39 @@ impl Dep {
     /// that collection (e.g. hot reloads).
     pub fn resource<R: Resource>() -> Dep {
         Dep(Arc::new(ResourceDep::<R>(std::marker::PhantomData)))
+    }
+
+    /// React only when a *projection* of resource `R` changes value — field
+    /// (or derived-value) wake granularity, expressible today: the closure
+    /// runs only when `R`'s tick advanced (tick-gated), and the reactor
+    /// wakes only when the projected value differs from the cached one.
+    ///
+    /// ```ignore
+    /// // Re-render once per displayed second, not 60×/sec:
+    /// Dep::resource_value(|s: &Season| s.remaining.ceil() as u32)
+    /// ```
+    pub fn resource_value<R, V>(project: impl Fn(&R) -> V + Send + Sync + 'static) -> Dep
+    where
+        R: Resource,
+        V: PartialEq + Send + Sync + 'static,
+    {
+        Dep(Arc::new(ResourceValueDep::<R, V, _> {
+            project,
+            _marker: std::marker::PhantomData,
+        }))
+    }
+
+    /// [`Dep::resource_value`], over component `T` on the reactor's own
+    /// entity.
+    pub fn this_value<T, V>(project: impl Fn(&T) -> V + Send + Sync + 'static) -> Dep
+    where
+        T: Component,
+        V: PartialEq + Send + Sync + 'static,
+    {
+        Dep(Arc::new(ThisValueDep::<T, V, _> {
+            project,
+            _marker: std::marker::PhantomData,
+        }))
     }
 
     /// React to changes of component `T` on the reactor's *own* entity,

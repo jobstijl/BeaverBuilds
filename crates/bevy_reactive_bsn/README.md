@@ -75,6 +75,7 @@ attempt (bevy_reactor/quill, bevy_cobweb, kayak_ui, belly, jonmo/haalka):
 | constructor | wakes on |
 |---|---|
 | `Dep::resource::<R>()` | resource changed / inserted / removed |
+| `Dep::resource_value(\|r: &R\| …)`, `this_value` | a *projection* of the data changed value — per-field wake granularity, tick-gated |
 | `Dep::this::<T>()` | `T` on the reactor's own entity (what inline fragments use) |
 | `Dep::entity::<T>(e)` | `T` on a specific entity |
 | `Dep::parent::<T>()` | `T` on the entity's `ChildOf` parent — re-parenting wakes it too |
@@ -132,10 +133,14 @@ Headless micro-benchmarks against a hand-written `Changed<T>` system
 | 10k patch reactors, 100 dirty/frame | 0.50 | ~0.8 µs/update |
 | 10k patch reactors, all dirty | 3.2 | ~280 ns/apply |
 | 1k `Dep::components` watchers over 10k entities, idle | 0.11 | one shared scan |
+| 10k value-projection deps, noisy resource, stable value | 0.48 | ≈ idle floor |
 | baseline `Changed<T>` system, 10k entities | 0.06 | ~6 ns/entity |
 
 The idle check is ~7× the raw ECS floor — the price of a dynamic layer; at
-UI scale (a few thousand reactors) it is fractions of a millisecond.
+UI scale (a few thousand reactors) it is fractions of a millisecond. The
+projection row is the per-field-wake story: a resource ticking every frame
+with a stable projected value costs the same as idle (~2 ns/reactor over the
+floor), where a plain `Dep::resource` would re-render everything (~3.3 ms).
 
 ## Async resources
 

@@ -189,7 +189,7 @@ impl Reactor {
 
     /// Fork a fresh instance of a (possibly shared) spec.
     pub fn from_spec(spec: ReactorSpec) -> Self {
-        let state = vec![DepState::default(); spec.deps.len()];
+        let state = spec.deps.iter().map(|_| DepState::default()).collect();
         Self {
             spec,
             last_run: Tick::new(0),
@@ -237,7 +237,7 @@ impl ReactorList {
     }
 
     pub fn from_spec(spec: ReactorListSpec) -> Self {
-        let state = vec![DepState::default(); spec.deps.len()];
+        let state = spec.deps.iter().map(|_| DepState::default()).collect();
         Self {
             spec,
             last_run: Tick::new(0),

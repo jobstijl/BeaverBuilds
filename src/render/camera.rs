@@ -61,7 +61,7 @@ fn spawn_camera(mut commands: Commands) {
     // haze dusty and pulls it closer. Attached imperatively (the camera is
     // spawned as a plain bundle) — the attach-to-existing-entity API.
     commands.entity(camera).insert(Reactor::patch(
-        [Dep::resource::<Season>()],
+        [Dep::resource_value(|s: &Season| s.drought)],
         |world: &World, _: Entity| {
             let drought = world.resource::<Season>().drought;
             let (color, start, end) = if drought {

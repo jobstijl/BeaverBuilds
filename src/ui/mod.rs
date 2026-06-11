@@ -9,7 +9,7 @@ use crate::sim::beavers::StarvingCount;
 use crate::sim::buildings::{self, BUILDING_DEFS, Building, BuildingDef, UnderConstruction};
 use crate::sim::map::Map;
 use crate::sim::water::forecast_drought_retention;
-use crate::sim::{ForecastTick, Population, Season, SeasonClock, Stockpile};
+use crate::sim::{ForecastTick, Population, Season, Stockpile};
 
 /// All UI is declarative BSN: every dynamic part is a `reactive(..)` fragment
 /// embedded directly in the scene tree.
@@ -61,13 +61,16 @@ fn top_bar() -> impl bevy::scene::Scene {
                     let text = format!("Beavers {}/{}", p.count, p.cap);
                     bsn! { Text({ text }) }
                 }),
-            // Calendar / season readout. Depends on the whole-second clock,
-            // not the raw countdown, so it wakes 1×/second instead of 60×.
+            // Calendar / season readout. The projection dep wakes it once
+            // per displayed second (and on day/phase flips), not 60×/sec,
+            // even though Season's countdown ticks every frame.
             reactive(
-                [Dep::resource::<Season>(), Dep::resource::<SeasonClock>()],
+                [Dep::resource_value(|s: &Season| {
+                    (s.day, s.drought, s.remaining.max(0.0).ceil() as u32)
+                })],
                 |world: &World, _: Entity| {
                     let s = world.resource::<Season>();
-                    let seconds = world.resource::<SeasonClock>().0;
+                    let seconds = s.remaining.max(0.0).ceil() as u32;
                     let text = if s.drought {
                         format!("Day {}  ·  DROUGHT  {seconds}s left", s.day)
                     } else {
@@ -144,7 +147,7 @@ fn warnings() -> impl bevy::scene::Scene {
         }
         reactive_list(
                 [
-                    Dep::resource::<Season>(),
+                    Dep::resource_value(|s: &Season| s.drought),
                     Dep::resource::<Stockpile>(),
                     Dep::resource::<Population>(),
                     Dep::resource::<StarvingCount>(),

@@ -30,13 +30,6 @@ pub struct Season {
     day_timer: f32,
 }
 
-/// Seconds remaining in the current season, in whole seconds, written only
-/// when the displayed value actually changes. UI that shows the countdown
-/// depends on this instead of `Season` (whose `remaining` field ticks every
-/// frame), so the text reactor wakes once per second instead of 60×.
-#[derive(Resource, Default, PartialEq)]
-pub struct SeasonClock(pub u32);
-
 /// Bumped every few seconds: the throttle for expensive derived state like
 /// the async drought forecast (which also reacts to dam construction).
 #[derive(Resource, Default)]
@@ -69,7 +62,6 @@ impl Plugin for SimPlugin {
             water: 12.0,
         })
         .init_resource::<Season>()
-        .init_resource::<SeasonClock>()
         .init_resource::<ForecastTick>()
         .init_resource::<Population>()
         .insert_resource(Time::<Fixed>::from_hz(16.0))
@@ -85,36 +77,23 @@ impl Plugin for SimPlugin {
     }
 }
 
-fn advance_season(time: Res<Time>, mut season: ResMut<Season>, mut clock: ResMut<SeasonClock>) {
+fn advance_season(time: Res<Time>, mut season: ResMut<Season>) {
+    // Written naturally every tick: UI that wants coarser wake granularity
+    // declares it at the dependency (`Dep::resource_value`), not here.
     let dt = time.delta_secs();
-    // The countdown ticks every frame; updating it through
-    // `bypass_change_detection` keeps `Season` change-quiet so reactors
-    // watching it only wake on real transitions (phase flip, new day).
-    // The displayed countdown lives in `SeasonClock`, written 1×/second.
-    let mut transition = false;
-    let s = season.bypass_change_detection();
-    s.remaining -= dt;
-    if s.remaining <= 0.0 {
-        s.drought = !s.drought;
-        s.remaining = if s.drought {
+    season.remaining -= dt;
+    if season.remaining <= 0.0 {
+        season.drought = !season.drought;
+        season.remaining = if season.drought {
             DROUGHT_LENGTH
         } else {
             WET_LENGTH
         };
-        transition = true;
     }
-    s.day_timer += dt;
-    if s.day_timer >= DAY_LENGTH {
-        s.day_timer -= DAY_LENGTH;
-        s.day += 1;
-        transition = true;
-    }
-    if transition {
-        season.set_changed();
-    }
-    let seconds = season.remaining.max(0.0).ceil() as u32;
-    if clock.0 != seconds {
-        clock.0 = seconds;
+    season.day_timer += dt;
+    if season.day_timer >= DAY_LENGTH {
+        season.day_timer -= DAY_LENGTH;
+        season.day += 1;
     }
 }
 
