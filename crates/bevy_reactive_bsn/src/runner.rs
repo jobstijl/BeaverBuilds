@@ -31,7 +31,7 @@ pub fn run_reactors(world: &mut World, mut scans: Local<SharedScans>, mut frame:
     #[cfg(debug_assertions)]
     let check_this_frame = {
         *frame = frame.wrapping_add(1);
-        *frame % 16 == 0
+        frame.is_multiple_of(16)
     };
     #[cfg(not(debug_assertions))]
     let _ = &mut frame;
