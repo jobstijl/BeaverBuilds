@@ -53,7 +53,13 @@
 //! never resources — so passes after the first skip every reactor whose
 //! entity-targeted deps point outside the previous pass's written set.
 //! Wake-ups are traced at `debug` level under the `reactive_bsn` target
-//! (`RUST_LOG=reactive_bsn=debug`). One `Reactor` and one `ReactorList` per
+//! (`RUST_LOG=reactive_bsn=debug`). An entity carries one [`Reactor`]
+//! component holding any number of independent fragments: compose them with
+//! [`Reactor::and`], or by applying scenes sequentially (inline fragments
+//! merge; identical spec re-application replaces in place, reconstructed
+//! scenes append). Two inline fragments inside a *single* `bsn!` entity
+//! still fail loudly at spawn (duplicate component in one bundle) — use the
+//! composition routes above or child entities. One [`ReactorList`] per
 //! entity.
 //!
 //! **The write contract:** applying a reactor's scene may only write
@@ -160,14 +166,34 @@ impl ReactorSpec {
     }
 }
 
-/// A reactive BSN fragment instance. Attach to an entity (or declare inline
-/// with [`reactive`]); whenever a dependency changes, the scene function
-/// re-runs and its output is (re-)applied to that entity.
-#[derive(Component)]
-pub struct Reactor {
+/// One reactive fragment instance: a spec plus its per-instance run state.
+pub(crate) struct ReactorInstance {
     pub(crate) spec: ReactorSpec,
     pub(crate) last_run: Tick,
     pub(crate) state: Vec<DepState>,
+}
+
+impl ReactorInstance {
+    fn from_spec(spec: ReactorSpec) -> Self {
+        let state = spec.deps.iter().map(|_| DepState::default()).collect();
+        Self {
+            spec,
+            last_run: Tick::new(0),
+            state,
+        }
+    }
+}
+
+/// The reactive fragments attached to an entity. Attach with
+/// [`Reactor::patch`]/[`Reactor::rebuild`], or declare inline with
+/// [`reactive`] — multiple inline fragments on one entity merge into this
+/// one component, each keeping independent dependencies and run state, so
+/// concerns can be split as finely as one fragment per field. (At most one
+/// *rebuild* fragment per entity makes sense — each rebuild replaces the
+/// entity's whole subtree.)
+#[derive(Component, Default)]
+pub struct Reactor {
+    pub(crate) instances: Vec<ReactorInstance>,
 }
 
 impl Reactor {
@@ -189,11 +215,30 @@ impl Reactor {
 
     /// Fork a fresh instance of a (possibly shared) spec.
     pub fn from_spec(spec: ReactorSpec) -> Self {
-        let state = spec.deps.iter().map(|_| DepState::default()).collect();
         Self {
-            spec,
-            last_run: Tick::new(0),
-            state,
+            instances: vec![ReactorInstance::from_spec(spec)],
+        }
+    }
+
+    /// Add another independent fragment to this reactor.
+    pub fn and(mut self, spec: ReactorSpec) -> Self {
+        self.instances.push(ReactorInstance::from_spec(spec));
+        self
+    }
+
+    /// Merge a fresh instance of `spec` in, replacing any existing instance
+    /// of the same spec (identity = the render `Arc`), so re-applying a
+    /// scene that contains an inline fragment is idempotent.
+    pub(crate) fn merge_spec(&mut self, spec: ReactorSpec) {
+        let fresh = ReactorInstance::from_spec(spec);
+        if let Some(slot) = self
+            .instances
+            .iter_mut()
+            .find(|i| Arc::ptr_eq(&i.spec.render, &fresh.spec.render))
+        {
+            *slot = fresh;
+        } else {
+            self.instances.push(fresh);
         }
     }
 }
@@ -285,8 +330,19 @@ where
 
 pub(crate) fn from_spec_scene(spec: ReactorSpec) -> impl bevy::scene::Scene {
     // `template` produces a Scene for any closure returning a Component;
-    // every template build (= every spawn) forks a fresh instance.
-    template(move |_ctx| Ok(Reactor::from_spec(spec.clone())))
+    // every template build (= every spawn) forks a fresh instance. If the
+    // entity already carries a Reactor (another inline fragment in the same
+    // scene, or an earlier application), merge into it instead of clobbering
+    // it — this is what allows any number of fragments per entity.
+    template(move |ctx| {
+        let mut reactor = ctx
+            .entity
+            .get_mut::<Reactor>()
+            .map(|mut r| std::mem::take(&mut *r))
+            .unwrap_or_default();
+        reactor.merge_spec(spec.clone());
+        Ok(reactor)
+    })
 }
 
 /// Inline form of [`ReactorList`].

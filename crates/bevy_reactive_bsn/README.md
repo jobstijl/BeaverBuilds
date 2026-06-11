@@ -191,8 +191,9 @@ is the natural batch boundary anyway.
 - **Per-field invalidation** ("only `Score.lives` feeds this patch") needs
   field-level metadata in change detection and resolved BSN patches —
   upstream work by design; this layer stays on public APIs.
-- One `Reactor` + one `ReactorList` per entity (wrap extra fragments in
-  child entities).
+- Any number of fragments per entity (`Reactor::and`, or sequential scene
+  applications, which merge) — but two inline fragments inside a *single*
+  `bsn!` entity fail loudly at spawn; one `ReactorList` per entity.
 - The runner is single-threaded (exclusive system); dep checks are
   embarrassingly parallel if that ever matters.
 - Reactor scenes must only write their own entity and (de)spawned

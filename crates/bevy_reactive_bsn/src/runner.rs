@@ -14,8 +14,10 @@ use bevy::ecs::change_detection::Tick;
 use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 
+use std::sync::Arc;
+
 use super::dep::{DepCx, DepState, SharedScans, clamp_tick};
-use super::{Mode, Reactor, ReactorList, ReactorListSpec, ReactorSpec};
+use super::{Mode, Reactor, ReactorInstance, ReactorList, ReactorListSpec};
 
 /// Convergence passes allowed per frame before we assume two reactors are
 /// re-triggering each other.
@@ -44,49 +46,76 @@ pub fn run_reactors(world: &mut World, mut scans: Local<SharedScans>, mut frame:
         let mut ran_any = false;
 
         // --- Plain reactors -------------------------------------------------
-        // Detach spec + instance state so deps and renders can take &mut World.
-        let mut reactors: Vec<(Entity, ReactorSpec, Tick, Vec<DepState>)> = Vec::new();
+        // Detach instances so deps and renders can take &mut World.
+        let mut reactors: Vec<(Entity, Vec<ReactorInstance>)> = Vec::new();
         for (entity, mut reactor) in world.query::<(Entity, &mut Reactor)>().iter_mut(world) {
             let reactor = reactor.bypass_change_detection();
-            clamp_tick(&mut reactor.last_run, this_run);
-            if pass > 0 && skips_pass(&reactor.spec.deps, reactor.last_run, &written_prev, entity) {
+            for instance in &mut reactor.instances {
+                clamp_tick(&mut instance.last_run, this_run);
+            }
+            if pass > 0
+                && reactor
+                    .instances
+                    .iter()
+                    .all(|i| skips_pass(&i.spec.deps, i.last_run, &written_prev, entity))
+            {
                 continue;
             }
-            reactors.push((
-                entity,
-                reactor.spec.clone(),
-                reactor.last_run,
-                std::mem::take(&mut reactor.state),
-            ));
+            reactors.push((entity, std::mem::take(&mut reactor.instances)));
         }
 
-        for (entity, spec, last_run, mut state) in reactors {
-            let woke = first_dirty_dep(
-                world, &mut scans, &spec.deps, &mut state, entity, last_run, this_run,
-            );
-            let mut new_last = last_run;
-            if let Some(index) = woke {
+        for (entity, mut instances) in reactors {
+            for instance in &mut instances {
+                if pass > 0
+                    && skips_pass(
+                        &instance.spec.deps,
+                        instance.last_run,
+                        &written_prev,
+                        entity,
+                    )
+                {
+                    continue;
+                }
+                let woke = first_dirty_dep(
+                    world,
+                    &mut scans,
+                    &instance.spec.deps,
+                    &mut instance.state,
+                    entity,
+                    instance.last_run,
+                    this_run,
+                );
+                let Some(index) = woke else { continue };
                 ran_any = true;
                 debug!(
                     target: "reactive_bsn",
                     "reactor on {entity} woken by {}",
-                    spec.deps[index].describe()
+                    instance.spec.deps[index].describe()
                 );
                 written.insert(entity);
-                if spec.mode == Mode::Rebuild {
+                if instance.spec.mode == Mode::Rebuild {
                     collect_descendants(world, entity, &mut written);
                     world.entity_mut(entity).despawn_related::<Children>();
                 }
-                if let Err(err) = (spec.render)(world, entity) {
+                if let Err(err) = (instance.spec.render)(world, entity) {
                     warn!("reactor on {entity} failed to apply scene: {err:?}");
                 }
-                // Changes the reactor itself just made don't re-dirty it.
-                new_last = world.change_tick();
+                // Changes this instance just made don't re-dirty it.
+                instance.last_run = world.change_tick();
             }
             if let Some(mut reactor) = world.get_mut::<Reactor>(entity) {
                 let reactor = reactor.bypass_change_detection();
-                reactor.state = state;
-                reactor.last_run = new_last;
+                // A render may have merged NEW instances onto this entity
+                // (inline fragments in an applied scene); keep those.
+                for added in std::mem::take(&mut reactor.instances) {
+                    if !instances
+                        .iter()
+                        .any(|i| Arc::ptr_eq(&i.spec.render, &added.spec.render))
+                    {
+                        instances.push(added);
+                    }
+                }
+                reactor.instances = instances;
             }
         }
 
@@ -209,7 +238,9 @@ pub fn run_reactors(world: &mut World, mut scans: Local<SharedScans>, mut frame:
 fn watched_types(world: &mut World) -> std::collections::HashSet<std::any::TypeId> {
     let mut watched = std::collections::HashSet::new();
     for reactor in world.query::<&Reactor>().iter(world) {
-        watched.extend(reactor.spec.deps.iter().filter_map(|d| d.watched_type()));
+        for instance in &reactor.instances {
+            watched.extend(instance.spec.deps.iter().filter_map(|d| d.watched_type()));
+        }
     }
     for list in world.query::<&ReactorList>().iter(world) {
         watched.extend(list.spec.deps.iter().filter_map(|d| d.watched_type()));

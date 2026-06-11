@@ -218,7 +218,7 @@ is no push channel for mutations, and we argue below there shouldn't be.
   (every few seconds, or when a dam appears) and the retention percentage
   renders reactively. Continuous motion and the live water cellular
   automaton remain plain systems — the boundary held up well in practice.
-- **29 behavioral tests** (headless) pin the semantics: exactly one run per
+- **31 behavioral tests** (headless) pin the semantics: exactly one run per
   change (no spurious wakes), in-place merging preserves foreign components,
   presence ignores mutations, population changes wake whole-world deps,
   rebuild despawns old subtrees, list survivors keep their entities, chains
@@ -235,7 +235,9 @@ is no push channel for mutations, and we argue below there shouldn't be.
   warning, and a second inline reactor on one entity fails loudly at spawn
   (duplicate-component panic) rather than silently replacing the first.
   Value projections wake only on projected-value change and provably skip
-  projecting while the source is quiet (tick-gating).
+  projecting while the source is quiet (tick-gating); multiple fragments on
+  one entity wake and re-apply strictly independently, and sequential scene
+  applications merge fragments with documented append/replace identity.
 
 ## What this validates from #14437 — and what it challenges
 
@@ -269,9 +271,20 @@ path. We'd encourage upstream reactivity to stay pull-based.
    change detection, (b) automatic inference of which fields a patch reads
    (no manual lens), and (c) partial re-application of resolved patches.
    Those three are **not validated here and cannot be from outside** — they
-   are the experiment upstream would run. That the layer gained per-field
-   wakes without touching anything else is itself evidence for the claim
-   that the rest of the design is agnostic to how fine the dirty bits get.
+   are the experiment upstream would run — though their *value* shrank
+   under examination: the **re-application half is also approximable
+   today** by fragment splitting. An entity carries any number of
+   independent fragments (composed via `Reactor::and` or merged through
+   sequential scene application), so "re-apply only the dirty field"
+   becomes "one tiny fragment per concern, each with its own projection
+   dep" — validated by a test where two fragments on one entity wake and
+   re-apply strictly independently. What genuinely remains for upstream is
+   the ergonomic and constant-factor delta: field dirty metadata (no
+   projection cache), lens inference (no hand-written projection), and
+   sub-patch diffing (no fragment-splitting boilerplate). That the layer
+   gained per-field wakes *and* per-concern re-application without touching
+   anything else is itself evidence that the rest of the design is agnostic
+   to how fine the dirty bits get.
 2. *(Optional)* a `bsn!`-native reactive entry. We expected to need one; we
    didn't — scene-function includes already compose `reactive(...)`
    naturally, with full IDE support. A dedicated syntax would only add

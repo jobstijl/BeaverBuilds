@@ -828,12 +828,13 @@ fn list_duplicate_keys_are_ignored_with_one_child() {
     assert_eq!(children.len(), 1, "duplicate keys collapse to one child");
 }
 
-/// Documented rule: one `Reactor` per entity. Two inline fragments on the
-/// same entity fail *loudly* at spawn (BSN resolves them into one bundle,
-/// and Bevy rejects duplicate components) — not silently last-wins.
+/// Two inline fragments in the *same* `bsn!` entity still fail loudly at
+/// spawn (BSN puts two `Reactor` templates into one bundle before any merge
+/// can run). Multiple fragments per entity are composed with
+/// `Reactor::and(..)`, sequential `apply_scene`s, or child entities.
 #[test]
 #[should_panic(expected = "duplicate components")]
-fn second_inline_reactor_on_one_entity_panics_at_spawn() {
+fn two_inline_reactors_in_one_scene_panic_at_spawn() {
     use bevy::scene::WorldSceneExt;
     let mut app = app();
     let _ = app.world_mut().spawn_scene(bsn! {
@@ -969,4 +970,127 @@ fn this_value_projects_own_component() {
     app.update();
     assert_eq!(run_count(), 2);
     assert_eq!(app.world().get::<Label>(entity), Some(&Label(2)));
+}
+
+// ---------------------------------------------------------------------------
+// Multiple fragments per entity: the re-application half of per-field
+// ---------------------------------------------------------------------------
+
+/// Two fragments on ONE entity with distinct projections: each wakes — and
+/// re-applies its own small patch — independently. This is per-field
+/// re-application by fragment splitting.
+#[test]
+fn and_composes_independent_fragments_on_one_entity() {
+    let mut app = app();
+    let (runs_a, count_a) = counter();
+    let (runs_b, count_b) = counter();
+    let entity = app
+        .world_mut()
+        .spawn(
+            Reactor::patch(
+                [Dep::resource_value(|s: &Score| s.0 / 10)],
+                move |world: &World, _| {
+                    runs_a.fetch_add(1, Ordering::SeqCst);
+                    let bucket = world.resource::<Score>().0 / 10;
+                    bsn! { Value({ bucket }) }
+                },
+            )
+            .and(bevy_reactive_bsn::ReactorSpec::patch(
+                [Dep::resource_value(|s: &Score| s.0 % 2)],
+                move |world: &World, _| {
+                    runs_b.fetch_add(1, Ordering::SeqCst);
+                    let parity = world.resource::<Score>().0 % 2;
+                    bsn! { Label({ parity }) }
+                },
+            )),
+        )
+        .id();
+    app.update();
+    assert_eq!((count_a(), count_b()), (1, 1));
+    assert_eq!(app.world().get::<Value>(entity), Some(&Value(0)));
+    assert_eq!(app.world().get::<Label>(entity), Some(&Label(0)));
+
+    // Parity flips, bucket doesn't: only fragment B re-applies.
+    app.world_mut().resource_mut::<Score>().0 = 1;
+    app.update();
+    assert_eq!(
+        (count_a(), count_b()),
+        (1, 2),
+        "only the parity fragment wakes"
+    );
+    assert_eq!(app.world().get::<Label>(entity), Some(&Label(1)));
+
+    // Bucket flips, parity doesn't (1 -> 11): only fragment A re-applies.
+    app.world_mut().resource_mut::<Score>().0 = 11;
+    app.update();
+    assert_eq!(
+        (count_a(), count_b()),
+        (2, 2),
+        "only the bucket fragment wakes"
+    );
+    assert_eq!(app.world().get::<Value>(entity), Some(&Value(1)));
+}
+
+/// Applying a second scene with an inline fragment MERGES it next to the
+/// first instead of clobbering it. Merge identity is the spec's `Arc`:
+/// internal re-renders re-apply the *same* spec and replace in place
+/// (idempotent), while a *reconstructed* scene is a new spec and appends —
+/// so repeatedly applying rebuilt fragment scenes to a long-lived entity
+/// accumulates fragments (documented behavior; structural paths are safe
+/// because rebuilds despawn child entities wholesale).
+#[test]
+fn sequential_scene_applications_merge_inline_fragments() {
+    use bevy::scene::{EntityWorldMutSceneExt, WorldSceneExt};
+    let mut app = app();
+    let (runs_a, count_a) = counter();
+    let (runs_b, count_b) = counter();
+    let fragment_a = move || {
+        let runs_a = runs_a.clone();
+        reactive(
+            [Dep::resource::<Score>()],
+            move |world: &World, _: Entity| {
+                runs_a.fetch_add(1, Ordering::SeqCst);
+                let score = world.resource::<Score>().0;
+                bsn! { Value({ score }) }
+            },
+        )
+    };
+    let entity = app.world_mut().spawn_scene(fragment_a()).unwrap().id();
+
+    let fragment_b = reactive([Dep::resource::<Score>()], move |_: &World, _: Entity| {
+        runs_b.fetch_add(1, Ordering::SeqCst);
+        bsn! { Label(7) }
+    });
+    app.world_mut()
+        .entity_mut(entity)
+        .apply_scene(fragment_b)
+        .unwrap();
+    app.update();
+    assert_eq!(
+        app.world().get::<Value>(entity),
+        Some(&Value(0)),
+        "fragment A survives"
+    );
+    assert_eq!(
+        app.world().get::<Label>(entity),
+        Some(&Label(7)),
+        "fragment B merged in"
+    );
+    assert_eq!((count_a(), count_b()), (1, 1));
+
+    // Re-applying a RECONSTRUCTED A-scene appends a second A instance (new
+    // spec Arc — append semantics), and never clobbers B.
+    app.world_mut()
+        .entity_mut(entity)
+        .apply_scene(fragment_a())
+        .unwrap();
+    app.world_mut().resource_mut::<Score>().0 = 5;
+    app.update();
+    assert_eq!(app.world().get::<Value>(entity), Some(&Value(5)));
+    assert_eq!(count_b(), 2, "B: one instance, one wake per change");
+    assert_eq!(
+        count_a(),
+        1 + 2,
+        "A: reconstructed scene appended a second instance (both wake once)"
+    );
 }
