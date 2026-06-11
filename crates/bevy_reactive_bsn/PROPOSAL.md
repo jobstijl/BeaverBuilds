@@ -60,13 +60,15 @@ bsn! {
 commands.entity(sun).insert(Reactor::patch([Dep::resource::<Season>()], …));
 ```
 
-A `Reactor` is a component holding:
+A `Reactor` is a component holding any number of independent *fragments*
+(compose with `Reactor::and`, or by applying scenes sequentially — inline
+fragments merge). Each fragment holds:
 - a list of **declared dependencies** (`Dep`) — pure, `Arc`-shared specs;
 - a **scene function** `Fn(&World, Entity) -> impl Scene`;
 - a `last_run: Tick` and per-dep instance state.
 
-A reactor is *dirty* when any dependency reports a change tick newer than
-`last_run`. When dirty, the scene function re-runs and the result is
+A fragment is *dirty* when any of its dependencies reports a change tick
+newer than its `last_run`. When dirty, the scene function re-runs and the result is
 re-applied to the reactor's entity via `apply_scene` — BSN's patch semantics
 merge component values in place, which is what makes "re-render" cheap and
 non-destructive. The closure boundary type-erases the unnameable `bsn!`

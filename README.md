@@ -88,13 +88,16 @@ kayak, belly) and what died on which hill:
   `reactive_list(..)` return `impl Scene` (via BSN's template machinery), so reactive
   fragments are declared inline in scene trees; every spawn forks a fresh reactor
   instance. The whole HUD is five plain scene functions. Specs are shared and forkable:
-  one `ReactorSpec` serves all 2300 grass tiles. One reactor per entity.
+  one `ReactorSpec` serves all 2300 grass tiles — and one entity can carry any number of
+  independent fragments (`Reactor::and`, or sequential scene applications, which merge).
 - **Declared dependencies** instead of implicit read-tracking — debuggable, no
   hook-ordering footguns, maps 1:1 onto change detection: `Dep::resource::<R>()`,
   `Dep::this::<T>()` (the reactor's own entity — what inline fragments use),
   `Dep::entity::<T>(e)`, `Dep::presence::<T>(e)`/`presence_this` (insert/remove only —
   pair a structural rebuild on presence with a value patch, as the construction sites
-  do), `Dep::components::<T>()`, and relationship-aware deps
+  do), `Dep::resource_value(|r| …)`/`this_value` (tick-gated value *projections* — per-field
+  wake granularity: the calendar re-renders once per displayed second while the countdown
+  field ticks every frame), `Dep::components::<T>()`, and relationship-aware deps
   `Dep::related::<Children>(e)` / `Dep::related_components::<Children, T>(e)`
   ("react when T changes on anything related to e").
 - **Amortized scheduling.** Whole-world deps (`Dep::components`) are answered by one
