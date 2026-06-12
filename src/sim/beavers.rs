@@ -77,8 +77,11 @@ pub enum JobKind {
 }
 
 const WALK_SPEED: f32 = 2.6;
-const HUNGER_RATE: f32 = 1.0 / 35.0;
-const THIRST_RATE: f32 = 1.0 / 30.0;
+// Upkeep is deliberately gentle: the food/water pressure comes from birth
+// costs and drought storage, not a per-beaver treadmill (a tighter tuning
+// made one pump net-negative at five beavers once labor contention bit).
+const HUNGER_RATE: f32 = 1.0 / 50.0;
+const THIRST_RATE: f32 = 1.0 / 45.0;
 const STARVE_LIMIT: f32 = 45.0;
 
 pub struct BeaversPlugin;
@@ -175,31 +178,37 @@ fn claim_jobs(
     mut beavers: Query<(Entity, &mut Beaver, &Transform)>,
     mut jobs: Query<(Entity, &mut Job)>,
     map: Res<Map>,
+    stockpile: Res<Stockpile>,
     buildings: Query<(&Building, Has<UnderConstruction>)>,
 ) {
+    // Survival first: when stocks run low, water/food work outranks
+    // construction and chopping — otherwise distant pump jobs lose every
+    // tie-break to nearby trees while the colony dehydrates.
+    let rank = |kind: &JobKind| match kind {
+        JobKind::Pump(_) if stockpile.water < 10.0 => 0,
+        JobKind::Farm(_) if stockpile.food < 10.0 => 0,
+        JobKind::Build(_) => 1,
+        _ => 2,
+    };
     for (beaver_entity, mut beaver, transform) in &mut beavers {
         if beaver.state != BeaverState::Idle {
             continue;
         }
-        // Nearest unclaimed job, with construction first.
-        let mut best: Option<(Entity, f32, bool)> = None;
+        // Best = lowest (rank, distance).
+        let mut best: Option<(Entity, u8, f32)> = None;
         for (job_entity, job) in &jobs {
             if job.claimed_by.is_some() {
                 continue;
             }
-            let is_build = matches!(job.kind, JobKind::Build(_));
+            let r = rank(&job.kind);
             let pos = map.tile_center(job.tile.x, job.tile.y);
             let dist = pos.distance_squared(transform.translation);
             let better = match best {
                 None => true,
-                Some((_, best_dist, best_build)) => match (is_build, best_build) {
-                    (true, false) => true,
-                    (false, true) => false,
-                    _ => dist < best_dist,
-                },
+                Some((_, best_rank, best_dist)) => (r, dist) < (best_rank, best_dist),
             };
             if better {
-                best = Some((job_entity, dist, is_build));
+                best = Some((job_entity, r, dist));
             }
         }
         if let Some((job_entity, _, _)) = best

@@ -360,4 +360,47 @@ mod tests {
             "chopping must yield logs"
         );
     }
+
+    /// The attract mode plays this colony unattended on the title screen:
+    /// the governor must keep it alive *and visibly growing* through the
+    /// first escalating droughts. This pins the whole intro economy — the
+    /// pool-side pump placement, the forester bootstrap, the survival job
+    /// priority — at once.
+    #[test]
+    fn intro_governor_survives_and_keeps_building() {
+        let mut app = sim_app();
+        app.init_resource::<crate::intro::Governor>();
+        app.add_systems(Update, crate::intro::govern);
+        app.update(); // Startup: map, trees, the initial colony.
+
+        fn buildings(app: &mut App) -> usize {
+            let world = app.world_mut();
+            world
+                .query::<&super::buildings::Building>()
+                .iter(world)
+                .count()
+        }
+        let steps_per_day = (DAY_LENGTH / 0.062) as usize;
+        for _ in 0..8 * steps_per_day {
+            app.update();
+        }
+        let mid = buildings(&mut app);
+        assert!(
+            app.world().resource::<Population>().count > 0,
+            "demo colony alive at day 8"
+        );
+        for _ in 0..8 * steps_per_day {
+            app.update();
+        }
+        let end = buildings(&mut app);
+        let population = app.world().resource::<Population>().count;
+        assert!(
+            population > 0,
+            "the demo colony must outlive the first droughts"
+        );
+        assert!(
+            end > mid,
+            "the governor keeps building ({mid} -> {end} buildings)"
+        );
+    }
 }

@@ -401,7 +401,7 @@ fn self_dirtying_reactor_terminates_each_frame() {
 // Async resources
 // ---------------------------------------------------------------------------
 
-use bevy_reactive_bsn::{AsyncValue, AsyncView, reactive_async};
+use bevy_reactive_bsn::{AsyncView, reactive_async};
 
 fn async_child(app: &App, root: Entity) -> Entity {
     let children: Vec<Entity> = app.world().get::<Children>(root).unwrap().iter().collect();

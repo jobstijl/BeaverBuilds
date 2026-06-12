@@ -28,7 +28,13 @@ impl Plugin for IntroPlugin {
             .add_systems(Startup, (spawn_overlay, intro_speed))
             .add_systems(
                 Update,
-                (govern, cinematic_camera, start_on_input).run_if(in_state(AppState::Intro)),
+                (
+                    govern,
+                    cinematic_camera,
+                    start_on_input,
+                    restart_demo_if_fallen,
+                )
+                    .run_if(in_state(AppState::Intro)),
             )
             .add_systems(
                 Update,
@@ -206,12 +212,46 @@ fn reset_world(world: &mut World) {
     }
 }
 
+/// If the demo colony falls, the attract mode lingers on the ruins for a
+/// beat and then quietly starts over on a fresh seed. The title screen
+/// never exits to the game-over screen — that one is for players — and
+/// never sits on a dead world forever. `Local` state: (colony was alive,
+/// seconds since it fell).
+fn restart_demo_if_fallen(world: &mut World, mut state: Local<(bool, f32)>) {
+    let population = world.resource::<Population>().count;
+    if population > 0 {
+        *state = (true, 0.0);
+        return;
+    }
+    if !state.0 {
+        return;
+    }
+    state.1 += world.resource::<Time<Real>>().delta_secs();
+    if state.1 < 6.0 {
+        return;
+    }
+    *state = (false, 0.0);
+    info!("intro governor: the demo colony fell — restarting the attract mode");
+    reset_world(world);
+    let _ = world.run_system_cached(crate::render::spawn_terrain);
+    let _ = world.run_system_cached(crate::sim::trees::scatter_initial_trees);
+    let _ = world.run_system_cached(crate::sim::beavers::initial_colony);
+    *world.resource_mut::<Governor>() = Governor::default();
+    *world.resource_mut::<Cinematic>() = Cinematic::default();
+    // reset_world sets player speed; the attract mode runs hot.
+    if std::env::var("BB_FAST").is_err() {
+        world
+            .resource_mut::<Time<Virtual>>()
+            .set_relative_speed(5.0);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The governor (the colony plays itself during the intro)
 // ---------------------------------------------------------------------------
 
 #[derive(Resource, Default)]
-struct Governor {
+pub(crate) struct Governor {
     cooldown: f32,
     /// Pending road: tiles still to pave, one per beat.
     road: Vec<UVec2>,
@@ -227,7 +267,7 @@ struct Governor {
 /// afford its choice, falling back to a cheap lumberjack rather than
 /// idling into a death spiral.
 #[allow(clippy::too_many_arguments)]
-fn govern(
+pub(crate) fn govern(
     mut commands: Commands,
     time: Res<Time>,
     mut governor: ResMut<Governor>,
@@ -267,11 +307,52 @@ fn govern(
     let anchor = colony_anchor(&map, &buildings);
     let retention = forecast.iter().find_map(|v| v.ready().copied());
 
-    // A planned dam project takes precedence: finish the wall.
-    if let Some(&tile) = governor.dam_project.last() {
+    // Dam first, like the strategy guide says: plan the crossing as soon as
+    // the first lumberjack provides income, build it before anything fancy.
+    if governor.dam_project.is_empty()
+        && count(BuildingKind::Dam) == 0
+        && count(BuildingKind::Lumberjack) >= 1
+    {
+        governor.dam_project = plan_dam_crossing(&map, anchor, &[]);
+        if !governor.dam_project.is_empty() {
+            info!(
+                "intro governor: planned a {}-tile dam at {:?}",
+                governor.dam_project.len(),
+                governor.dam_project
+            );
+        }
+    }
+    // Once the colony stands behind its first wall, keep building: a second
+    // crossing extends the reservoir, which is exactly what the escalating
+    // droughts demand (and it keeps the attract mode visually alive).
+    if governor.dam_project.is_empty()
+        && count(BuildingKind::Dam) >= 2
+        && count(BuildingKind::Dam) < 8
+        && population.count >= 6
+        && stockpile.logs > 35.0
+    {
+        let existing: Vec<UVec2> = buildings
+            .iter()
+            .filter(|(b, _)| b.kind == BuildingKind::Dam)
+            .map(|(b, _)| b.tile)
+            .collect();
+        governor.dam_project = plan_dam_crossing(&map, anchor, &existing);
+        if !governor.dam_project.is_empty() {
+            info!(
+                "intro governor: expanding the reservoir — new wall at {:?}",
+                governor.dam_project
+            );
+        }
+    }
+    // An unfinished wall takes precedence over growth — but never over
+    // having an income (cheap lumberjack fallback) or the bootstrap trio.
+    if let Some(&tile) = governor.dam_project.last()
+        && count(BuildingKind::WaterPump) >= 1
+        && count(BuildingKind::CarrotFarm) >= 1
+    {
         if stockpile.logs >= def(BuildingKind::Dam).cost_logs {
-            governor.dam_project.pop();
             if placement_error(&map, BuildingKind::Dam, tile).is_none() {
+                governor.dam_project.pop();
                 place_building(
                     &mut commands,
                     &mut map,
@@ -281,7 +362,22 @@ fn govern(
                 );
                 governor.last_built = Some(tile);
                 info!("intro governor: dam wall segment at {tile}");
+            } else {
+                // A partial wall is useless: abandon the blocked project.
+                warn!("intro governor: dam segment at {tile} blocked; abandoning project");
+                governor.dam_project.clear();
             }
+        } else if count(BuildingKind::Lumberjack) < 2 + population.count as usize / 3
+            && stockpile.logs >= def(BuildingKind::Lumberjack).cost_logs
+            && let Some(spot) = find_spot(&map, BuildingKind::Lumberjack, anchor, &trees, None)
+        {
+            place_building(
+                &mut commands,
+                &mut map,
+                &mut stockpile,
+                BuildingKind::Lumberjack,
+                spot,
+            );
         }
         return;
     }
@@ -292,40 +388,53 @@ fn govern(
         Some(BuildingKind::WaterPump)
     } else if count(BuildingKind::CarrotFarm) == 0 {
         Some(BuildingKind::CarrotFarm)
-    } else if stockpile.water < 10.0
-        && count(BuildingKind::WaterPump) < 1 + population.count as usize / 4
+    } else if count(BuildingKind::Forester) == 0 {
+        // The forester is part of the bootstrap, not a luxury: three flags
+        // chop the colony bare within days, and replanting must start
+        // before the last mature tree falls — afterwards there is no wood
+        // income left to pay for the fix.
+        Some(BuildingKind::Forester)
+    } else if stockpile.water < 8.0 + population.count as f32
+        && count(BuildingKind::WaterPump) < 1 + population.count as usize / 3
     {
         Some(BuildingKind::WaterPump)
-    } else if stockpile.food < 10.0
-        && count(BuildingKind::CarrotFarm) < 1 + population.count as usize / 5
+    } else if stockpile.food < 8.0 + population.count as f32
+        && count(BuildingKind::CarrotFarm) < 1 + population.count as usize / 4
     {
         Some(BuildingKind::CarrotFarm)
-    } else if count(BuildingKind::Lumberjack) < 2 && stockpile.logs < 25.0 {
+    } else if stockpile.logs < 25.0
+        && count(BuildingKind::Lumberjack) < 2 + population.count as usize / 3
+    {
+        // Wood is the master resource: every other plan stalls without it.
+        // Flags scale with population and chase the remaining mature trees
+        // (find_spot requires one in range), so a chopped-out radius never
+        // freezes the treasury again.
         Some(BuildingKind::Lumberjack)
-    } else if population.count >= population.cap {
-        Some(BuildingKind::Lodge)
-    } else if retention.is_some_and(|r| r < 0.45) && count(BuildingKind::Dam) == 0 {
-        // Plan a real dam: pick a narrow crossing downstream of the colony
-        // and queue the full wet width as one project. (One reservoir only:
-        // over-damming strangles the downstream flow the pumps drink from —
-        // a lesson the governor learned the hard way.)
-        governor.dam_project = plan_dam_crossing(&map, anchor);
-        if !governor.dam_project.is_empty() {
-            info!(
-                "intro governor: planned a {}-tile dam at {:?}",
-                governor.dam_project.len(),
-                governor.dam_project
-            );
-        }
-        None
-    } else if count(BuildingKind::Forester) == 0 && trees.iter().count() < 240 {
+    } else if count(BuildingKind::Forester) < 1 + population.count as usize / 6
+        && trees.iter().count() < 240
+    {
         Some(BuildingKind::Forester)
-    } else if stockpile.logs > 45.0 {
-        // Prosperity: expand housing ahead of demand.
+    } else if population.count >= population.cap && count(BuildingKind::Dam) >= 2 {
+        // Growth only behind a finished wall: every birth is a mouth that
+        // must outlive the next drought.
         Some(BuildingKind::Lodge)
+    } else if stockpile.logs > 35.0 && count(BuildingKind::Dam) >= 2 {
+        Some(BuildingKind::Lodge)
+    } else if stockpile.logs > 28.0 {
+        // Prosperity building: spend the surplus ahead of demand. More
+        // capacity means the next growth spurt doesn't dip the stocks, and
+        // the attract mode never sits idle.
+        Some(
+            if count(BuildingKind::WaterPump) <= count(BuildingKind::CarrotFarm) {
+                BuildingKind::WaterPump
+            } else {
+                BuildingKind::CarrotFarm
+            },
+        )
     } else {
         None
     };
+    let _ = retention;
 
     if let Some(mut kind) = choice {
         if stockpile.logs < def(kind).cost_logs {
@@ -337,7 +446,26 @@ fn govern(
                 return; // save up; try again next beat
             }
         }
-        if let Some(tile) = find_spot(&map, kind, anchor, &trees) {
+        // Pumps aim for the *pool side* of the wall: the midpoint between
+        // colony and dam lies on the future reservoir. Hugging the dam tile
+        // itself is a coin flip between shores — and the downstream shore
+        // goes permanently dry the moment the wall holds.
+        let near = (kind == BuildingKind::WaterPump)
+            .then(|| {
+                governor
+                    .dam_project
+                    .first()
+                    .copied()
+                    .or_else(|| {
+                        buildings
+                            .iter()
+                            .find(|(b, _)| b.kind == BuildingKind::Dam)
+                            .map(|(b, _)| b.tile)
+                    })
+                    .map(|dam| (anchor + dam) / 2)
+            })
+            .flatten();
+        if let Some(tile) = find_spot(&map, kind, anchor, &trees, near) {
             place_building(&mut commands, &mut map, &mut stockpile, kind, tile);
             governor.last_built = Some(tile);
             info!("intro governor: building {} at {tile}", def(kind).name);
@@ -363,12 +491,17 @@ fn govern(
 }
 
 /// Pick the narrowest river section in a band downstream of the colony and
-/// return its wet tiles (the dam wall), nearest-to-colony first.
-fn plan_dam_crossing(map: &Map, anchor: UVec2) -> Vec<UVec2> {
+/// return its wet tiles (the dam wall), nearest-to-colony first. `avoid`
+/// lists existing dam tiles; new crossings keep at least 6 tiles of river
+/// between walls so each one impounds a real stretch of water.
+fn plan_dam_crossing(map: &Map, anchor: UVec2, avoid: &[UVec2]) -> Vec<UVec2> {
     let mut best: Option<Vec<UVec2>> = None;
     for dx in 4..(map.width as i32 / 2) {
         for x in [anchor.x as i32 + dx, anchor.x as i32 - dx] {
             if x < 0 || x as u32 >= map.width {
+                continue;
+            }
+            if avoid.iter().any(|d| (d.x as i32 - x).abs() < 6) {
                 continue;
             }
             let wall: Vec<UVec2> = (0..map.height)
@@ -401,8 +534,16 @@ fn colony_anchor(map: &Map, buildings: &Query<(&Building, Has<UnderConstruction>
         .unwrap_or(UVec2::new(map.width / 2, map.height / 2))
 }
 
-/// Nearest valid tile to `anchor`, with kind-specific preferences.
-fn find_spot(map: &Map, kind: BuildingKind, anchor: UVec2, trees: &Query<&Tree>) -> Option<UVec2> {
+/// Nearest valid tile to `anchor` (or to `near` when given — e.g. pumps
+/// hugging the future reservoir), with kind-specific preferences.
+fn find_spot(
+    map: &Map,
+    kind: BuildingKind,
+    anchor: UVec2,
+    trees: &Query<&Tree>,
+    near: Option<UVec2>,
+) -> Option<UVec2> {
+    let anchor = near.unwrap_or(anchor);
     let mut candidates: Vec<UVec2> = (0..map.height)
         .flat_map(|y| (0..map.width).map(move |x| UVec2::new(x, y)))
         .filter(|t| placement_error(map, kind, *t).is_none())

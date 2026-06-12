@@ -40,14 +40,16 @@ fn start_scribe(mut commands: Commands, bridge: Res<WorldBridge>) {
                     .run(move |world: &mut World| {
                         let population = world.resource::<Population>().count;
                         let stock = world.resource::<Stockpile>();
-                        let (logs, food) = (stock.logs as i64, stock.food as i64);
+                        let (logs, food, water) =
+                            (stock.logs as i64, stock.food as i64, stock.water as i64);
                         let drought = world.resource::<Season>().drought;
                         let forecast = world
                             .query::<&AsyncValue<f32>>()
                             .iter(world)
                             .find_map(|v| v.ready().copied());
-                        let mut line =
-                            format!("Day {day}: {population} beavers · {logs} logs · {food} food");
+                        let mut line = format!(
+                            "Day {day}: {population} beavers · {logs} logs · {food} food · {water} water"
+                        );
                         if drought {
                             line.push_str(" · enduring drought");
                         } else if let Some(retention) = forecast {
@@ -59,9 +61,13 @@ fn start_scribe(mut commands: Commands, bridge: Res<WorldBridge>) {
                 else {
                     break;
                 };
+                info!(target: "chronicle", "{line}");
                 if bridge
-                    .run(move |world: &mut World| {
-                        world.resource_mut::<Chronicle>().0.push(line);
+                    .run({
+                        let line = line.clone();
+                        move |world: &mut World| {
+                            world.resource_mut::<Chronicle>().0.push(line);
+                        }
                     })
                     .await
                     .is_none()
