@@ -223,7 +223,7 @@ is no push channel for mutations, and we argue below there shouldn't be.
   (every few seconds, or when a dam appears) and the retention percentage
   renders reactively. Continuous motion and the live water cellular
   automaton remain plain systems — the boundary held up well in practice.
-- **31 behavioral tests** (headless) pin the semantics: exactly one run per
+- **32 behavioral tests** (headless) pin the semantics: exactly one run per
   change (no spurious wakes), in-place merging preserves foreign components,
   presence ignores mutations, population changes wake whole-world deps,
   rebuild despawns old subtrees, list survivors keep their entities, chains
@@ -235,7 +235,8 @@ is no push channel for mutations, and we argue below there shouldn't be.
   re-parenting and orphaning (the `ChildOf` edge is itself part of the
   dependency), relationship deps track member mutation/addition/removal/
   despawn, filtered scans ignore non-matching entities, rebuilt subtrees'
-  brand-new nested reactors settle the same frame, list reorders follow key
+  brand-new nested reactors settle the same frame, a rebuild that despawns
+  its own reactive children mid-pass is safe, list reorders follow key
   order with surviving entities, duplicate list keys collapse with a
   warning, and a second inline reactor on one entity fails loudly at spawn
   (duplicate-component panic) rather than silently replacing the first.
@@ -314,20 +315,29 @@ path. We'd encourage upstream reactivity to stay pull-based.
   per-type scans can ride them directly: whole-world dependency checks drop
   from O(entities with `T`) to O(changed pages) with no API change here.
 - **`bevy_async` ([#21744], sync-point bridges) composes naturally — now
-  demonstrated, not just asserted.** The validation game runs a minimal
-  stand-in for the bridge pattern (the real crate couldn't be used yet: it
-  pins Bevy 0.18 / tracks bevy main): a long-lived async "scribe" task
+  demonstrated, not just asserted.** The PR's evolution has made the fit
+  tighter still: in its current design, sync points *are ordinary systems*
+  (`async_world_sync_point::<Marker>`, added to a schedule like any other),
+  so "bridge in after the reactors have converged" is plain system
+  ordering — `.after(ReactSet)`. The validation game runs a minimal
+  stand-in for the bridge pattern (the real crate still can't be used here:
+  its staging crate, `bevy_malek_async`, pins a pre-release git revision of
+  bevy main — though its newest iteration bridges any closure that *is* a
+  system, params inferred, so the exclusive form
+  `async_world.bridge(|world: &mut World| …).await` has converged on
+  exactly the stand-in's shape): a long-lived async "scribe" task
   bridges in at a sync point placed *after* the reactor runner, reads the
   **settled** post-reactive state of the frame — including an async-derived
   `AsyncValue` — and writes a chronicle entry that the reactive UI renders
   like any other resource. Async task → bridge → ECS → reactor, one frame,
   full circle; the runner's schedule position is precisely the sync point
-  the bridge design wants. Notably, the same author's experimental async
-  BSN UI implements `on_mutation` by *pumping `Changed<C>` scans at sync
-  points* — convergent evolution: everyone building reactivity on today's
-  Bevy ends up pull-based, which is an argument for standardizing the
-  substrate (shared scans, declared deps) rather than each layer re-rolling
-  it.
+  the bridge design wants. Notably, the bridge API now keeps `SystemParam`
+  state (`Local`, `Changed`) alive across calls, and the same author's
+  experimental async UI implements `on_mutation` by *pumping `Changed<C>`
+  scans at sync points* — convergent evolution: everyone building
+  reactivity on today's Bevy ends up pull-based, which is an argument for
+  standardizing the substrate (shared scans, declared deps) rather than
+  each layer re-rolling it.
 - **Web-style async reactivity needs no new machinery.** This crate's
   `reactive_async` (a `createResource`/React-Query analog: deps → future →
   result-as-component → render) demonstrates that Suspense is just the

@@ -17,14 +17,18 @@ of BSN**, since upstream BSN deliberately ships without reactivity.
 
 ![genre](https://img.shields.io/badge/genre-city%20builder-brown)
 
+![A beaver colony mid-game: dam across the river, farms and pumps, the reactive HUD up top and the daily chronicle bottom-right](docs/colony.png)
+
 ## The game
 
 You manage a beaver colony on a 48×48 tile map crossed by a river. The river runs during the
 wet season and **stops during droughts** — water in the world evaporates, dry land turns
-yellow, farms stop producing. Build dams to hoard water, keep food and drinking water
-stocked, and grow the colony.
+yellow, farms stop producing. **Droughts escalate**: every cycle survived makes the next
+drought longer and the wet season shorter. Build dams to hoard water, keep food and
+drinking water stocked, and grow the colony.
 
-- **Lodge** — houses 5 beavers; new beavers arrive while there is food and water.
+- **Lodge** — houses 5 beavers; new beavers are born while stocks last (each birth costs
+  3 food and 3 water).
 - **Water pump** — a beaver pumps drinking water from an adjacent water tile.
 - **Carrot farm** — produces food, but only on irrigated (green) land.
 - **Lumberjack flag** — beavers chop mature trees nearby for logs.
@@ -41,7 +45,8 @@ between Bevy's in-flight `bevy_async` bridge (PR #21744) and the reactive layer.
 Beavers are simple agents: they claim the nearest posted job (construction first),
 **pathfind to it on the async task pool** (A* that routes around water and trees and
 bends along your stone paths), work, and the result lands in the colony stockpile. They eat and drink on a timer;
-when stocks run out they turn red and eventually die.
+when stocks run out they turn red and eventually die. Lose the last beaver and the
+colony falls — game over; click (or Space/Enter) to start a fresh colony.
 
 **Controls:** WASD pan · Q/E rotate · scroll zoom · click a build button then a tile ·
 right-click/Esc cancel · click a building to inspect · Space pause · 1/2/3 game speed.
@@ -53,10 +58,14 @@ cargo run                 # opens on the cinematic intro; click to start playing
 cargo run --release       # full optimization
 ```
 
+![The cinematic intro: the BeaverBuilds title over a scripted colony playing itself, "click to take command"](docs/intro.png)
+
 The game opens as a **letterboxed cinematic intro**: a scripted governor plays a colony
-at speed — bootstrapping a lumberjack/pump/farm, housing the population, **damming the
-river when the async drought forecast dips below 40%**, paving roads tile-by-tile —
-while the camera glides between points of interest. **Click (or Space/Enter) to take
+at speed — bootstrapping lumberjacks, **damming the river as soon as the first lumberjack
+provides income**, placing pumps on the pool side of the wall, planting foresters to keep
+the wood supply alive, housing the population only behind a finished dam, paving roads
+tile-by-tile — while the camera glides between points of interest. If the demo colony
+ever falls, the intro restarts it on a fresh map. **Click (or Space/Enter) to take
 command**: the demo world is torn down and a fresh colony starts on a brand-new map.
 
 Optional environment variables (combinable):
@@ -179,9 +188,11 @@ tiles instead of "the whole map changed every tick".
 `cargo test --workspace` — the reactive crate carries 32 behavioral tests; the game's
 simulation has its own suite (pathfinding routes around walls and prefers stone paths,
 the water step conserves mass, **dams must improve drought retention** — a gameplay
-invariant that once failed and exposed a real balance bug — placement rules, and a
-deterministic headless end-to-end run: place a lumberjack, advance ~56 simulated
-seconds, require construction, pathfinding, chopping and logs to all have happened).
+invariant that once failed and exposed a real balance bug — placement rules, droughts
+escalate, births cost food and water, colony collapse triggers game over, the intro
+governor survives several days headless while still building, and a deterministic
+headless end-to-end run: place a lumberjack, advance ~56 simulated seconds, require
+construction, pathfinding, chopping and logs to all have happened).
 
 ## Benchmarks
 
@@ -222,13 +233,18 @@ cargo run --release  # full optimization
 ```
 crates/
   bevy_reactive_bsn/   the reactive BSN layer, as a standalone library crate
-    lib.rs      Reactor/ReactorSpec, ReactorList, inline reactive()/…_rebuild()/…_list()
-    dep.rs      Dep constructors, shared per-type scans, tick clamping
-    runner.rs   convergence-loop runner: written-entity pass filtering, wake tracing
+    lib.rs             Reactor/ReactorSpec, ReactorList, inline reactive()/…_rebuild()/…_list()
+    dep.rs             Dep constructors, shared per-type scans, tick clamping
+    runner.rs          convergence-loop runner: written-entity pass filtering, wake tracing
+    async_resource.rs  reactive_async, AsyncSlot/AsyncValue/AsyncView, the task-driving system
 src/
-  sim/        simulation: map grid, water CA + irrigation, trees, buildings,
-              jobs, beaver agents, seasons (all plain ECS)
-  render/     world visuals as BSN scenes + reactors; orbit camera
-  interact/   tool state, picking, placement ghost
-  ui/         HUD: top bar, warnings feed, build menu, info panel (all reactive BSN)
+  sim/          simulation: map grid, water CA + irrigation, trees, buildings,
+                jobs, beaver agents, seasons (all plain ECS)
+  render/       world visuals as BSN scenes + reactors; orbit camera
+  interact/     tool state, picking, placement ghost
+  ui/           HUD: top bar, warnings feed, build menu, info panel (all reactive BSN)
+  intro.rs      cinematic intro: scripted governor, camera tour, game-over restart
+  bridge.rs     minimal sync-point bridge (the bevy_async stand-in), placed after ReactSet
+  chronicle.rs  the async "scribe" task writing the daily colony chronicle
+  bench.rs      BB_BENCH=1 headless micro-benchmarks
 ```

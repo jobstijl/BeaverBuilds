@@ -13,6 +13,12 @@ Fine-grained, change-tick-driven reactivity for Bevy's BSN scene system
 (`bsn!`, Bevy 0.19+) — an experiment in the design space Cart sketched for
 "Reactive BSN" in [bevy#14437], built entirely on public APIs.
 
+![The validation game (BeaverBuilds): its entire HUD and world visuals are driven by this layer](../../docs/colony.png)
+
+*Validated in a full game — [BeaverBuilds](../../README.md) — whose entire HUD
+and world visuals (per-tile water, irrigation tinting, tree growth,
+construction progress, drought lighting) are driven by this layer.*
+
 ```rust
 use bevy::prelude::*;
 use bevy_reactive_bsn::{reactive, Dep, ReactiveBsnPlugin};
@@ -179,9 +185,9 @@ drives task handles to completion. The machinery also stands alone:
 game's beavers pathfind this way (A* on the task pool, waypoints read by
 the movement system), evidence that "async results are ordinary ECS state"
 is not a UI-shaped claim. In-game usage, by consumption pattern: the
-drought forecast (one `reactive_async` producer read by the reactive HUD,
-by the intro governor — a plain system — and by the chronicle's bridged
-async task), the selected-dam reservoir gauge (a `reactive_async` nested
+drought forecast (one `reactive_async` producer read by the reactive HUD
+and by the chronicle's bridged async task), the selected-dam reservoir
+gauge (a `reactive_async` nested
 inside a rebuild fragment, so selection changes cancel the in-flight
 measurement), and pathfinding (raw `AsyncSlot`, request-tagged). (Bevy's in-flight `bevy_async` sync-point
 bridge, PR #21744, composes with this rather than replacing it: bridges give

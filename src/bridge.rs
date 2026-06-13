@@ -7,8 +7,10 @@
 //! *after* [`ReactSet`](bevy_reactive_bsn::ReactSet) lets async tasks read
 //! **settled** post-reactive state in the same frame, and anything they
 //! write flows back into the reactive UI like any other ECS state. (The
-//! real bevy_async couldn't be used yet: its staging crate pins Bevy 0.18
-//! and its repo tracks bevy main.)
+//! real bevy_async couldn't be used yet: its staging crate, bevy_malek_async,
+//! pins a pre-release git revision of bevy main. Its newest API has since
+//! converged on this module's exact shape —
+//! `async_world.bridge(|world: &mut World| …).await`.)
 
 use async_channel::{Receiver, Sender};
 use bevy::prelude::*;
