@@ -106,10 +106,11 @@ renderer on a child, because a child must not write its parent.
 | constructor | wakes on |
 |---|---|
 | `Dep::resource::<R>()` | resource change/insert/remove |
-| `Dep::resource_value(\|r: &R\| …)` / `Dep::this_value` | a *projection* changed value (tick-gated; per-field wakes today) |
+| `Dep::resource_value(\|r: &R\| …)` / `_value` variants (`this`/`entity`/`parent`/`ancestor`) | a *projection* changed value (tick-gated; per-field wakes today) |
 | `Dep::this::<T>()` / `Dep::entity::<T>(e)` | `T` on one entity, incl. insert/remove |
-| `Dep::presence::<T>(e)` | insert/remove only (pair a rebuild-on-presence with a patch-on-value) |
+| `Dep::presence::<T>(e)` / `Dep::resource_presence::<R>()` | insert/remove only (pair a rebuild-on-presence with a patch-on-value) |
 | `Dep::parent::<T>()` | `T` on the entity's `ChildOf` parent (child fragments rendering parent-owned state) |
+| `Dep::ancestor::<T>()` | `T` on the nearest `ChildOf` ancestor carrying it — a Context analog (provide = insert `T` on a container; read via `world.nearest_ancestor`) |
 | `Dep::components::<T>()` | `T` anywhere, incl. population changes |
 | `Dep::related::<S>(e)` / `Dep::related_components::<S, T>(e)` | relation set / components across a relation |
 
@@ -223,7 +224,7 @@ is no push channel for mutations, and we argue below there shouldn't be.
   (every few seconds, or when a dam appears) and the retention percentage
   renders reactively. Continuous motion and the live water cellular
   automaton remain plain systems — the boundary held up well in practice.
-- **32 behavioral tests** (headless) pin the semantics: exactly one run per
+- **40 behavioral tests** (headless) pin the semantics: exactly one run per
   change (no spurious wakes), in-place merging preserves foreign components,
   presence ignores mutations, population changes wake whole-world deps,
   rebuild despawns old subtrees, list survivors keep their entities, chains
@@ -244,6 +245,10 @@ is no push channel for mutations, and we argue below there shouldn't be.
   projecting while the source is quiet (tick-gating); multiple fragments on
   one entity wake and re-apply strictly independently, and sequential scene
   applications merge fragments with documented append/replace identity.
+  `Dep::ancestor` reads the nearest provider, re-resolves on re-parenting and
+  when a nearer provider appears (the Context analog); `entity_value` and
+  `parent_value` wake on a single projected field of a passed-in / parent
+  state component; and `resource_presence` ignores resource mutation.
 
 ## What this validates from #14437 — and what it challenges
 
@@ -362,7 +367,13 @@ path. We'd encourage upstream reactivity to stay pull-based.
 - Multi-schedule runners (e.g. a second pass post-`PostUpdate`) — trivially
   possible, scheduling policy unclear.
 - `Dep` granularity for assets (`Dep::resource::<Assets<T>>()` works but is
-  collection-wide; per-handle deps would want asset events).
+  collection-wide; a per-handle `Dep::asset::<T>(handle)` would watch
+  `AssetEvent<T>` so one reload re-renders one consumer).
+- A message/event dep (`Dep::message::<E>()`, wake when an `E` was sent this
+  frame). Both this and the per-handle asset dep ride event buffers rather than
+  change ticks, so they're a slightly different `DepSpec` shape; the message
+  one's frame-scoped semantics (re-render while the message is buffered) want
+  pinning down before it lands.
 
 ## Appendix: prior-art positioning
 

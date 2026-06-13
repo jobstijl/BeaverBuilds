@@ -355,13 +355,16 @@ where
     }
 }
 
-/// Like [`ResourceValueDep`], over a component on the reactor's own entity.
-struct ThisValueDep<T, V, F> {
+/// Like [`ResourceValueDep`], over component `T` on a *targeted* entity — the
+/// reactor's own entity (`this_value`), a fixed entity (`entity_value`), or the
+/// `ChildOf` parent (`parent_value`).
+struct ComponentValueDep<T, V, F> {
+    target: Target,
     project: F,
     _marker: std::marker::PhantomData<fn() -> (T, V)>,
 }
 
-impl<T, V, F> DepSpec for ThisValueDep<T, V, F>
+impl<T, V, F> DepSpec for ComponentValueDep<T, V, F>
 where
     T: Component,
     V: PartialEq + Send + Sync + 'static,
@@ -369,12 +372,22 @@ where
 {
     fn check(&self, cx: &mut DepCx, state: &mut DepState) -> bool {
         clamp_tick(&mut state.seen, cx.this_run);
-        let entity = cx.world.get_entity(cx.this).ok();
+        let entity = self
+            .target
+            .resolve(cx.this, cx.world)
+            .and_then(|e| cx.world.get_entity(e).ok());
         let ticks = entity.as_ref().and_then(|e| e.get_change_ticks::<T>());
+        // A `Parent` target whose `ChildOf` edge moved now points at a
+        // *different* entity, so the projected value may differ even though the
+        // new parent's `T` tick is old — bypass the tick-gate in that case and
+        // let the `PartialEq` compare decide.
+        let reparented = self
+            .target
+            .reparented(cx.this, cx.world, state.seen, cx.this_run);
         let (Some(entity), Some(ticks)) = (entity, ticks) else {
             return state.cache.take().is_some();
         };
-        if state.cache.is_some() && !ticks.is_changed(state.seen, cx.this_run) {
+        if state.cache.is_some() && !reparented && !ticks.is_changed(state.seen, cx.this_run) {
             return false;
         }
         state.seen = cx.this_run;
@@ -393,11 +406,144 @@ where
     }
 
     fn maybe_affected(&self, written: &EntityHashSet, this: Entity) -> bool {
-        written.contains(&this)
+        self.target.maybe_in(written, this)
     }
 
     fn watched_type(&self) -> Option<TypeId> {
         Some(TypeId::of::<T>())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ancestor dependencies: the ECS analog of React Context
+// ---------------------------------------------------------------------------
+
+/// Defensive cap on the `ChildOf` walk: a well-formed hierarchy never cycles,
+/// but a malformed one shouldn't loop forever.
+const MAX_ANCESTOR_DEPTH: usize = 256;
+
+/// Walk `ChildOf` upward from `entity` to the nearest *strict ancestor*
+/// carrying `T`. Shared by [`Dep::ancestor`] and [`WorldAncestorExt`] so the
+/// dependency and the value read always agree on which entity is "nearest".
+fn nearest_ancestor_entity<T: Component>(world: &World, entity: Entity) -> Option<Entity> {
+    let mut cur = world.get::<ChildOf>(entity)?.parent();
+    for _ in 0..MAX_ANCESTOR_DEPTH {
+        if world.get::<T>(cur).is_some() {
+            return Some(cur);
+        }
+        cur = world.get::<ChildOf>(cur)?.parent();
+    }
+    None
+}
+
+/// Reacts to component `T` on the nearest strict `ChildOf` ancestor carrying
+/// it. Wakes on the provider's value change, on re-parenting that changes which
+/// ancestor is nearest, and on the provider appearing/disappearing.
+struct AncestorDep<T> {
+    _marker: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T: Component> DepSpec for AncestorDep<T> {
+    fn check(&self, cx: &mut DepCx, state: &mut DepState) -> bool {
+        let provider = nearest_ancestor_entity::<T>(cx.world, cx.this);
+        // Provider identity (appeared / vanished / swapped via re-parenting
+        // anywhere up the chain) is tracked in the type-erased cache slot; on
+        // the first check `prev` is `None`, so a new watcher fires once.
+        let prev = state
+            .cache
+            .as_ref()
+            .and_then(|c| c.downcast_ref::<Option<Entity>>())
+            .copied();
+        let identity_changed = prev != Some(provider);
+        state.cache = Some(Box::new(provider));
+        let value_changed = provider
+            .and_then(|e| cx.world.get_entity(e).ok())
+            .and_then(|e| e.get_change_ticks::<T>())
+            .is_some_and(|t| t.is_changed(cx.last_run, cx.this_run));
+        identity_changed || value_changed
+    }
+
+    fn describe(&self) -> String {
+        format!("nearest ancestor with {}", short_name::<T>())
+    }
+
+    fn watched_type(&self) -> Option<TypeId> {
+        Some(TypeId::of::<T>())
+    }
+}
+
+/// [`AncestorDep`] with a value projection. Unlike the resource/this value deps
+/// this is *not* tick-gated — provider identity can change with no tick
+/// advancing — so it re-walks and re-projects each check and leans on the
+/// `PartialEq` cache to suppress spurious wakes. Ancestors are shallow.
+struct AncestorValueDep<T, V, F> {
+    project: F,
+    _marker: std::marker::PhantomData<fn() -> (T, V)>,
+}
+
+impl<T, V, F> DepSpec for AncestorValueDep<T, V, F>
+where
+    T: Component,
+    V: PartialEq + Send + Sync + 'static,
+    F: Fn(&T) -> V + Send + Sync,
+{
+    fn check(&self, cx: &mut DepCx, state: &mut DepState) -> bool {
+        let value = nearest_ancestor_entity::<T>(cx.world, cx.this)
+            .and_then(|e| cx.world.get::<T>(e))
+            .map(|t| (self.project)(t));
+        let Some(value) = value else {
+            return state.cache.take().is_some();
+        };
+        match state.cache.as_ref().and_then(|c| c.downcast_ref::<V>()) {
+            Some(old) if *old == value => false,
+            _ => {
+                state.cache = Some(Box::new(value));
+                true
+            }
+        }
+    }
+
+    fn describe(&self) -> String {
+        format!("projected value of nearest ancestor with {}", short_name::<T>())
+    }
+
+    fn watched_type(&self) -> Option<TypeId> {
+        Some(TypeId::of::<T>())
+    }
+}
+
+/// Read access matching [`Dep::ancestor`]: the nearest strict `ChildOf`
+/// ancestor of `entity` carrying `T`. Use it inside a render closure so the
+/// read walks the same path the dependency wakes on.
+pub trait WorldAncestorExt {
+    /// The nearest strict ancestor of `entity` carrying `T`, if any.
+    fn nearest_ancestor<T: Component>(&self, entity: Entity) -> Option<&T>;
+}
+
+impl WorldAncestorExt for World {
+    fn nearest_ancestor<T: Component>(&self, entity: Entity) -> Option<&T> {
+        nearest_ancestor_entity::<T>(self, entity).and_then(|e| self.get::<T>(e))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resource presence dependency (insert/remove only)
+// ---------------------------------------------------------------------------
+
+struct ResourcePresenceDep<R>(std::marker::PhantomData<fn() -> R>);
+
+impl<R: Resource> DepSpec for ResourcePresenceDep<R> {
+    fn check(&self, cx: &mut DepCx, state: &mut DepState) -> bool {
+        // Existence-only: wakes on insert/remove across checks, ignores
+        // mutations. A remove-then-reinsert within one check window nets to no
+        // change and is not distinguished (rare for resources, unlike
+        // component presence which has an `added`-tick to lean on).
+        let exists = cx.world.contains_resource::<R>();
+        state.existed.replace(exists) != Some(exists)
+    }
+
+    fn describe(&self) -> String {
+        format!("presence of resource {}", short_name::<R>())
     }
 }
 
@@ -441,7 +587,42 @@ impl Dep {
         T: Component,
         V: PartialEq + Send + Sync + 'static,
     {
-        Dep(Arc::new(ThisValueDep::<T, V, _> {
+        Dep(Arc::new(ComponentValueDep::<T, V, _> {
+            target: Target::This,
+            project,
+            _marker: std::marker::PhantomData,
+        }))
+    }
+
+    /// [`Dep::resource_value`], over component `T` on one specific entity — the
+    /// per-field companion to [`Dep::entity`]. Lets a widget watching state on
+    /// a passed-in entity wake on just one field of a bundled state component
+    /// instead of on every field (one fat `WidgetState` component, several
+    /// independent projection fragments).
+    pub fn entity_value<T, V>(
+        entity: Entity,
+        project: impl Fn(&T) -> V + Send + Sync + 'static,
+    ) -> Dep
+    where
+        T: Component,
+        V: PartialEq + Send + Sync + 'static,
+    {
+        Dep(Arc::new(ComponentValueDep::<T, V, _> {
+            target: Target::Fixed(entity),
+            project,
+            _marker: std::marker::PhantomData,
+        }))
+    }
+
+    /// [`Dep::resource_value`], over component `T` on the reactor entity's
+    /// `ChildOf` parent — re-parenting re-projects against the new parent.
+    pub fn parent_value<T, V>(project: impl Fn(&T) -> V + Send + Sync + 'static) -> Dep
+    where
+        T: Component,
+        V: PartialEq + Send + Sync + 'static,
+    {
+        Dep(Arc::new(ComponentValueDep::<T, V, _> {
+            target: Target::Parent,
             project,
             _marker: std::marker::PhantomData,
         }))
@@ -478,6 +659,38 @@ impl Dep {
         }))
     }
 
+    /// React to component `T` on the nearest *strict ancestor* (walking
+    /// `ChildOf`) that carries it — the ECS analog of React Context: "provide"
+    /// by inserting `T` on a container entity, "inject" with this dep.
+    /// Generalizes [`Dep::parent`] (the distance-1 case) and decouples a widget
+    /// from *which* ancestor holds the state. Wakes when that component
+    /// changes, when re-parenting changes which ancestor is nearest, and when
+    /// the provider appears or disappears.
+    ///
+    /// Read the value in the render closure with
+    /// [`WorldAncestorExt::nearest_ancestor`], which walks the same path.
+    pub fn ancestor<T: Component>() -> Dep {
+        Dep(Arc::new(AncestorDep::<T> {
+            _marker: std::marker::PhantomData,
+        }))
+    }
+
+    /// [`Dep::ancestor`] with a value projection: wakes only when a *projection*
+    /// of the nearest ancestor's `T` changes value. Unlike
+    /// [`Dep::resource_value`]/[`Dep::this_value`] this is not tick-gated
+    /// (provider identity can change with no tick advancing), so it re-projects
+    /// each check; ancestors are shallow, so this stays cheap.
+    pub fn ancestor_value<T, V>(project: impl Fn(&T) -> V + Send + Sync + 'static) -> Dep
+    where
+        T: Component,
+        V: PartialEq + Send + Sync + 'static,
+    {
+        Dep(Arc::new(AncestorValueDep::<T, V, _> {
+            project,
+            _marker: std::marker::PhantomData,
+        }))
+    }
+
     /// React only when component `T` is inserted on / removed from `entity`,
     /// ignoring mutations. Use for "mode switch" components whose fields also
     /// tick every frame (e.g. a construction-progress component), typically
@@ -495,6 +708,13 @@ impl Dep {
             target: Target::This,
             _marker: std::marker::PhantomData,
         }))
+    }
+
+    /// React only when resource `R` is inserted or removed, ignoring mutations
+    /// — the resource analog of [`Dep::presence`]. (A remove-then-reinsert
+    /// within one check window nets to no change and is not distinguished.)
+    pub fn resource_presence<R: Resource>() -> Dep {
+        Dep(Arc::new(ResourcePresenceDep::<R>(std::marker::PhantomData)))
     }
 
     /// React when *any* entity's `T` changes, or entities with `T` are added

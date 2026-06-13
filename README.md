@@ -131,11 +131,14 @@ kayak, belly) and what died on which hill:
 - **Declared dependencies** instead of implicit read-tracking — debuggable, no
   hook-ordering footguns, maps 1:1 onto change detection: `Dep::resource::<R>()`,
   `Dep::this::<T>()` (the reactor's own entity — what inline fragments use),
-  `Dep::entity::<T>(e)`, `Dep::presence::<T>(e)`/`presence_this` (insert/remove only —
+  `Dep::entity::<T>(e)`, `Dep::ancestor::<T>()` (the nearest `ChildOf` ancestor carrying
+  `T` — a React-Context analog, read back with `world.nearest_ancestor::<T>()`),
+  `Dep::presence::<T>(e)`/`presence_this`/`resource_presence` (insert/remove only —
   pair a structural rebuild on presence with a value patch, as the construction sites
-  do), `Dep::resource_value(|r| …)`/`this_value` (tick-gated value *projections* — per-field
-  wake granularity: the calendar re-renders once per displayed second while the countdown
-  field ticks every frame), `Dep::components::<T>()`, and relationship-aware deps
+  do), `Dep::resource_value(|r| …)`/`this_value`/`entity_value`/`parent_value` (tick-gated
+  value *projections* — per-field wake granularity: the calendar re-renders once per
+  displayed second while the countdown field ticks every frame, and a fat state component
+  can be watched one field at a time), `Dep::components::<T>()`, and relationship-aware deps
   `Dep::related::<Children>(e)` / `Dep::related_components::<Children, T>(e)`
   ("react when T changes on anything related to e").
 - **Amortized scheduling.** Whole-world deps (`Dep::components`) are answered by one
@@ -185,7 +188,7 @@ tiles instead of "the whole map changed every tick".
 
 ## Tests
 
-`cargo test --workspace` — the reactive crate carries 32 behavioral tests; the game's
+`cargo test --workspace` — the reactive crate carries 40 behavioral tests; the game's
 simulation has its own suite (pathfinding routes around walls and prefers stone paths,
 the water step conserves mass, **dams must improve drought retention** — a gameplay
 invariant that once failed and exposed a real balance bug — placement rules, droughts

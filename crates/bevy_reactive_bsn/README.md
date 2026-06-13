@@ -78,17 +78,18 @@ attempt (bevy_reactor/quill, bevy_cobweb, kayak_ui, belly, jonmo/haalka):
 
 ### Dependencies
 
-| constructor | wakes on |
-|---|---|
-| `Dep::resource::<R>()` | resource changed / inserted / removed |
-| `Dep::resource_value(\|r: &R\| …)`, `this_value` | a *projection* of the data changed value — per-field wake granularity, tick-gated |
-| `Dep::this::<T>()` | `T` on the reactor's own entity (what inline fragments use) |
-| `Dep::entity::<T>(e)` | `T` on a specific entity |
-| `Dep::parent::<T>()` | `T` on the entity's `ChildOf` parent — re-parenting wakes it too |
-| `Dep::presence::<T>(e)`, `presence_this` | insert/remove of `T` only, mutations ignored |
-| `Dep::components::<T>()` (`_filtered`) | `T` on *any* entity, incl. population changes |
-| `Dep::related::<S>(e)`, `related_this` | the relation set `S` (e.g. `Children`) of `e` |
-| `Dep::related_components::<S, T>(e)`, `…_this` | `T` on any entity related to `e` via `S` |
+| constructor                                                          | wakes on                                                                                                                               |                                                                     |                                                                                                                                |
+| ----------------------------------------------------------------------| ----------------------------------------------------------------------------------------------------------------------------------------| ---------------------------------------------------------------------| --------------------------------------------------------------------------------------------------------------------------------|
+| `Dep::resource::<R>()`                                               | resource changed / inserted / removed                                                                                                  |                                                                     |                                                                                                                                |
+| `Dep::resource_value(\                                               | r: &R\                                                                                                                                 | …)`, `this_value`, `entity_value`, `parent_value`, `ancestor_value` | a *projection* of the data changed value — per-field wake granularity, tick-gated (the `ancestor` form re-projects each check) |
+| `Dep::this::<T>()`                                                   | `T` on the reactor's own entity (what inline fragments use)                                                                            |                                                                     |                                                                                                                                |
+| `Dep::entity::<T>(e)`                                                | `T` on a specific entity                                                                                                               |                                                                     |                                                                                                                                |
+| `Dep::parent::<T>()`                                                 | `T` on the entity's `ChildOf` parent — re-parenting wakes it too                                                                       |                                                                     |                                                                                                                                |
+| `Dep::ancestor::<T>()`                                               | `T` on the nearest `ChildOf` ancestor carrying it — the ECS analog of React Context; read it back with `world.nearest_ancestor::<T>()` |                                                                     |                                                                                                                                |
+| `Dep::presence::<T>(e)`, `presence_this`, `resource_presence::<R>()` | insert/remove only, mutations ignored                                                                                                  |                                                                     |                                                                                                                                |
+| `Dep::components::<T>()` (`_filtered`)                               | `T` on *any* entity, incl. population changes                                                                                          |                                                                     |                                                                                                                                |
+| `Dep::related::<S>(e)`, `related_this`                               | the relation set `S` (e.g. `Children`) of `e`                                                                                          |                                                                     |                                                                                                                                |
+| `Dep::related_components::<S, T>(e)`, `…_this`                       | `T` on any entity related to `e` via `S`                                                                                               |                                                                     |                                                                                                                                |
 
 `Dep`s are pure, `Arc`-cheap specifications; per-instance state lives on the
 reactor, so a `ReactorSpec` can be forked across thousands of entities
@@ -219,6 +220,13 @@ is the natural batch boundary anyway.
   descendants (checked in debug builds; see Scheduling above).
 - Runs in `Update` by default; state written later (e.g. `PostUpdate`)
   is picked up next frame.
+- **Two dep sources still want adding**, both riding a *different* mechanism
+  than change ticks (so they're a slightly different `DepSpec` shape):
+  - a **per-handle asset dep** `Dep::asset::<T>(handle)` — today
+    `Dep::resource::<Assets<T>>()` works but is collection-wide; a per-handle
+    dep would watch `AssetEvent<T>` so one reload re-renders one consumer;
+  - a **message/event dep** `Dep::message::<E>()` — wake when an `E` was sent
+    this frame (frame-scoped buffer semantics need pinning down before it lands).
 
 ## License
 

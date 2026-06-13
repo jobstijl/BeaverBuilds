@@ -8,7 +8,8 @@
 //!   ticks. Anything any system writes — with no special wrapper — can drive
 //!   a reactor.
 //! - **Declared dependencies** ([`Dep::resource`], [`Dep::this`],
-//!   [`Dep::entity`], [`Dep::components`], [`Dep::related_components`]) —
+//!   [`Dep::entity`], [`Dep::ancestor`], [`Dep::components`],
+//!   [`Dep::related_components`]) —
 //!   debuggable, no hook-ordering footguns, 1:1 onto change detection.
 //!   Whole-world component dependencies are checked through one *shared scan
 //!   per type per frame*, however many reactors watch the type.
@@ -87,7 +88,7 @@ use bevy::prelude::*;
 use bevy::scene::SpawnSceneError;
 
 pub use async_resource::{AsyncSlot, AsyncValue, AsyncView, reactive_async};
-pub use dep::Dep;
+pub use dep::{Dep, WorldAncestorExt};
 use dep::DepState;
 
 pub struct ReactiveBsnPlugin;

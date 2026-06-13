@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bevy::prelude::*;
 use bevy_reactive_bsn::{
-    Dep, ReactiveBsnPlugin, Reactor, ReactorList, ReactorSpec, keyed, reactive,
+    Dep, ReactiveBsnPlugin, Reactor, ReactorList, ReactorSpec, WorldAncestorExt, keyed, reactive,
 };
 
 #[derive(Component, Clone, Default, PartialEq, Debug)]
@@ -1131,4 +1131,299 @@ fn rebuild_despawning_reactive_children_same_pass_is_safe() {
     app.update();
     let children: Vec<Entity> = app.world().get::<Children>(root).unwrap().iter().collect();
     assert_eq!(app.world().get::<Label>(children[0]), Some(&Label(5)));
+}
+
+// ---------------------------------------------------------------------------
+// ancestor deps (Context analog), entity/parent value projections, and
+// resource presence
+// ---------------------------------------------------------------------------
+
+#[derive(Component, Clone, Default, PartialEq, Debug)]
+struct WidgetState {
+    a: u32,
+    b: u32,
+}
+
+/// A reactor watching the nearest ancestor's `Value`, reading it through the
+/// matching `WorldAncestorExt::nearest_ancestor` helper.
+fn ancestor_reactor() -> Reactor {
+    Reactor::patch([Dep::ancestor::<Value>()], |world: &World, e| {
+        let v = world.nearest_ancestor::<Value>(e).map(|v| v.0).unwrap_or(0);
+        bsn! { Label({ v }) }
+    })
+}
+
+#[test]
+fn ancestor_dep_reads_nearest_provider_and_wakes_on_value() {
+    let mut app = app();
+    let provider = app.world_mut().spawn(Value(10)).id();
+    let middle = app.world_mut().spawn(ChildOf(provider)).id();
+    let leaf = app.world_mut().spawn((ChildOf(middle), ancestor_reactor())).id();
+
+    app.update();
+    app.update();
+    assert_eq!(
+        app.world().get::<Label>(leaf),
+        Some(&Label(10)),
+        "reads the nearest ancestor carrying Value, skipping the value-less middle"
+    );
+
+    app.world_mut()
+        .entity_mut(provider)
+        .get_mut::<Value>()
+        .unwrap()
+        .0 = 11;
+    app.update();
+    assert_eq!(
+        app.world().get::<Label>(leaf),
+        Some(&Label(11)),
+        "the provider's value change wakes the ancestor watcher"
+    );
+}
+
+#[test]
+fn ancestor_dep_wakes_on_reparent_to_a_new_provider() {
+    let mut app = app();
+    let prov_a = app.world_mut().spawn(Value(1)).id();
+    let prov_b = app.world_mut().spawn(Value(2)).id();
+    let leaf = app.world_mut().spawn((ChildOf(prov_a), ancestor_reactor())).id();
+
+    app.update();
+    app.update();
+    assert_eq!(app.world().get::<Label>(leaf), Some(&Label(1)));
+
+    // Pure re-parent: neither provider's `Value` ticks.
+    app.world_mut().entity_mut(leaf).insert(ChildOf(prov_b));
+    app.update();
+    assert_eq!(
+        app.world().get::<Label>(leaf),
+        Some(&Label(2)),
+        "re-parenting under a different provider wakes and re-resolves"
+    );
+}
+
+#[test]
+fn ancestor_dep_wakes_when_a_nearer_provider_appears() {
+    let mut app = app();
+    let provider = app.world_mut().spawn(Value(10)).id();
+    let middle = app.world_mut().spawn(ChildOf(provider)).id();
+    let leaf = app.world_mut().spawn((ChildOf(middle), ancestor_reactor())).id();
+
+    app.update();
+    app.update();
+    assert_eq!(app.world().get::<Label>(leaf), Some(&Label(10)));
+
+    // A nearer ancestor gains `Value`: it becomes the resolved provider.
+    app.world_mut().entity_mut(middle).insert(Value(99));
+    app.update();
+    assert_eq!(
+        app.world().get::<Label>(leaf),
+        Some(&Label(99)),
+        "a closer provider appearing wakes the watcher and re-resolves nearest"
+    );
+}
+
+#[test]
+fn entity_value_wakes_only_on_the_projected_field() {
+    let mut app = app();
+    let (runs, run_count) = counter();
+    let state = app.world_mut().spawn(WidgetState { a: 0, b: 0 }).id();
+    app.world_mut().spawn(Reactor::patch(
+        [Dep::entity_value(state, |s: &WidgetState| s.a)],
+        move |world: &World, _| {
+            runs.fetch_add(1, Ordering::SeqCst);
+            let a = world.get::<WidgetState>(state).map(|s| s.a).unwrap_or(0);
+            bsn! { Label({ a }) }
+        },
+    ));
+    app.update();
+    assert_eq!(run_count(), 1);
+
+    // A sibling field on the same component must not wake.
+    app.world_mut()
+        .entity_mut(state)
+        .get_mut::<WidgetState>()
+        .unwrap()
+        .b = 5;
+    app.update();
+    app.update();
+    assert_eq!(
+        run_count(),
+        1,
+        "a sibling field change does not wake an entity_value projection"
+    );
+
+    app.world_mut()
+        .entity_mut(state)
+        .get_mut::<WidgetState>()
+        .unwrap()
+        .a = 7;
+    app.update();
+    assert_eq!(run_count(), 2, "the projected field change wakes");
+}
+
+#[test]
+fn parent_value_projects_a_single_parent_field() {
+    let mut app = app();
+    let (runs, run_count) = counter();
+    let parent = app.world_mut().spawn(WidgetState { a: 1, b: 1 }).id();
+    let child = app
+        .world_mut()
+        .spawn((
+            ChildOf(parent),
+            Reactor::patch(
+                [Dep::parent_value(|s: &WidgetState| s.a)],
+                move |world: &World, e| {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    let a = world
+                        .get::<ChildOf>(e)
+                        .and_then(|c| world.get::<WidgetState>(c.parent()))
+                        .map(|s| s.a)
+                        .unwrap_or(0);
+                    bsn! { Label({ a }) }
+                },
+            ),
+        ))
+        .id();
+    app.update();
+    assert_eq!(run_count(), 1);
+    assert_eq!(app.world().get::<Label>(child), Some(&Label(1)));
+
+    app.world_mut()
+        .entity_mut(parent)
+        .get_mut::<WidgetState>()
+        .unwrap()
+        .b = 9;
+    app.update();
+    app.update();
+    assert_eq!(
+        run_count(),
+        1,
+        "a sibling field on the parent does not wake parent_value"
+    );
+
+    app.world_mut()
+        .entity_mut(parent)
+        .get_mut::<WidgetState>()
+        .unwrap()
+        .a = 4;
+    app.update();
+    assert_eq!(run_count(), 2, "the projected parent field wakes");
+    assert_eq!(app.world().get::<Label>(child), Some(&Label(4)));
+}
+
+#[test]
+fn resource_presence_wakes_on_insert_remove_but_not_mutation() {
+    let mut app = app();
+    let (runs, run_count) = counter();
+    app.world_mut().spawn(Reactor::patch(
+        [Dep::resource_presence::<Flag>()],
+        move |_: &World, _| {
+            runs.fetch_add(1, Ordering::SeqCst);
+            bsn! { Label(0) }
+        },
+    ));
+    app.update();
+    assert_eq!(run_count(), 1, "first run with the resource absent");
+
+    app.world_mut().insert_resource(Flag(1));
+    app.update();
+    assert_eq!(run_count(), 2, "insertion wakes");
+
+    // Mutation must be ignored.
+    app.world_mut().resource_mut::<Flag>().0 = 2;
+    app.update();
+    app.update();
+    assert_eq!(
+        run_count(),
+        2,
+        "resource mutation does not wake a presence watcher"
+    );
+
+    app.world_mut().remove_resource::<Flag>();
+    app.update();
+    assert_eq!(run_count(), 3, "removal wakes");
+}
+
+#[test]
+fn ancestor_value_wakes_only_on_the_projected_field() {
+    let mut app = app();
+    let (runs, run_count) = counter();
+    let provider = app.world_mut().spawn(WidgetState { a: 1, b: 1 }).id();
+    let middle = app.world_mut().spawn(ChildOf(provider)).id();
+    app.world_mut().spawn((
+        ChildOf(middle),
+        Reactor::patch(
+            [Dep::ancestor_value(|s: &WidgetState| s.a)],
+            move |world: &World, e| {
+                runs.fetch_add(1, Ordering::SeqCst);
+                let a = world
+                    .nearest_ancestor::<WidgetState>(e)
+                    .map(|s| s.a)
+                    .unwrap_or(0);
+                bsn! { Label({ a }) }
+            },
+        ),
+    ));
+    app.update();
+    assert_eq!(run_count(), 1);
+
+    // A sibling field on the nearest provider must not wake.
+    app.world_mut()
+        .entity_mut(provider)
+        .get_mut::<WidgetState>()
+        .unwrap()
+        .b = 9;
+    app.update();
+    app.update();
+    assert_eq!(
+        run_count(),
+        1,
+        "a sibling field on the ancestor provider does not wake ancestor_value"
+    );
+
+    app.world_mut()
+        .entity_mut(provider)
+        .get_mut::<WidgetState>()
+        .unwrap()
+        .a = 5;
+    app.update();
+    assert_eq!(run_count(), 2, "the projected ancestor field wakes");
+}
+
+#[test]
+fn parent_value_reprojects_on_pure_reparent() {
+    let mut app = app();
+    let parent_a = app.world_mut().spawn(WidgetState { a: 1, b: 0 }).id();
+    let parent_b = app.world_mut().spawn(WidgetState { a: 2, b: 0 }).id();
+    let child = app
+        .world_mut()
+        .spawn((
+            ChildOf(parent_a),
+            Reactor::patch(
+                [Dep::parent_value(|s: &WidgetState| s.a)],
+                |world: &World, e| {
+                    let a = world
+                        .get::<ChildOf>(e)
+                        .and_then(|c| world.get::<WidgetState>(c.parent()))
+                        .map(|s| s.a)
+                        .unwrap_or(0);
+                    bsn! { Label({ a }) }
+                },
+            ),
+        ))
+        .id();
+    app.update();
+    app.update();
+    assert_eq!(app.world().get::<Label>(child), Some(&Label(1)));
+
+    // Pure re-parent onto a parent whose projected field differs but whose
+    // `WidgetState` tick is old: the reparent itself must trigger a re-project.
+    app.world_mut().entity_mut(child).insert(ChildOf(parent_b));
+    app.update();
+    assert_eq!(
+        app.world().get::<Label>(child),
+        Some(&Label(2)),
+        "re-parenting re-projects parent_value against the new parent"
+    );
 }
