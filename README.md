@@ -11,8 +11,8 @@
 > evidence for that design conversation — ideas that humans are welcome to evaluate,
 > re-derive, and hand-author if they prove useful.
 
-A small Timberborn-inspired beaver city builder, built on **Bevy 0.19** (release candidate —
-the first version that ships the new BSN scene system) plus a custom **reactive layer on top
+A small Timberborn-inspired beaver city builder, built on **Bevy 0.19** (the first
+version that ships the new BSN scene system) plus a custom **reactive layer on top
 of BSN**, since upstream BSN deliberately ships without reactivity.
 
 ![genre](https://img.shields.io/badge/genre-city%20builder-brown)
@@ -200,7 +200,7 @@ construction, pathfinding, chopping and logs to all have happened).
 ## Benchmarks
 
 `BB_BENCH=1 cargo run --release` runs headless micro-benchmarks against a hand-written
-`Changed<T>` system baseline. On a Ryzen 7 5800X (release, Bevy 0.19-rc.3):
+`Changed<T>` system baseline. On a Ryzen 7 5800X (release, Bevy 0.19):
 
 | scenario | ms/frame | per unit |
 |---|---|---|
