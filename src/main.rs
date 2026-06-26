@@ -3,10 +3,12 @@ mod bridge;
 mod chronicle;
 mod interact;
 mod intro;
+mod menu;
 mod render;
 mod sim;
 mod ui;
 
+use bevy::feathers::{FeathersPlugins, dark_theme::create_dark_theme, theme::UiTheme};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
@@ -42,6 +44,8 @@ fn main() {
             ..default()
         }))
         .add_plugins(MeshPickingPlugin)
+        .add_plugins(FeathersPlugins)
+        .insert_resource(UiTheme(create_dark_theme()))
         .insert_state(if std::env::var("BB_SKIP_INTRO").is_ok() {
             AppState::Playing
         } else {
@@ -52,6 +56,7 @@ fn main() {
             bridge::BridgePlugin,
             chronicle::ChroniclePlugin,
             intro::IntroPlugin,
+            menu::MenuPlugin,
             sim::SimPlugin,
             render::RenderPlugin,
             interact::InteractPlugin,

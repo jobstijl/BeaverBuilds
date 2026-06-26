@@ -20,7 +20,9 @@ pub struct GameUiPlugin;
 impl Plugin for GameUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_ui)
-            .add_systems(OnEnter(AppState::Playing), show_hud);
+            .add_systems(OnEnter(AppState::Playing), show_hud)
+            // Quitting to the title (from the pause menu) hides the HUD again.
+            .add_systems(OnEnter(AppState::Intro), hide_hud);
     }
 }
 
@@ -74,6 +76,12 @@ fn notice_banner() -> impl bevy::scene::Scene {
 fn show_hud(mut roots: Query<&mut Visibility, With<HudRoot>>) {
     for mut visibility in &mut roots {
         *visibility = Visibility::Visible;
+    }
+}
+
+fn hide_hud(mut roots: Query<&mut Visibility, With<HudRoot>>) {
+    for mut visibility in &mut roots {
+        *visibility = Visibility::Hidden;
     }
 }
 
@@ -491,7 +499,7 @@ fn hints() -> impl bevy::scene::Scene {
             left: px(10),
         }
         Children [(
-            Text("WASD pan · Q/E rotate · R/F or middle-drag tilt · scroll zoom · click build · right-click cancel · Space pause · 1/2/3 speed")
+            Text("WASD pan · Q/E rotate · R/F or middle-drag tilt · scroll zoom · click build · right-click cancel · Space pause · 1/2/3 speed · Esc menu")
             TextFont { font_size: px(11) }
             TextColor(Color::srgba(1.0, 1.0, 1.0, 0.45))
         )]

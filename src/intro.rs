@@ -60,6 +60,14 @@ impl Plugin for IntroPlugin {
             .add_systems(
                 Update,
                 restart_on_input.run_if(in_state(AppState::GameOver)),
+            )
+            // Re-entering the attract mode (the pause menu's "quit to title").
+            // Guarded by TileEntities so it never runs on the initial boot
+            // into Intro — that fires before Startup has built the world, and
+            // Startup's own spawns (plus spawn_overlay) bring up the title.
+            .add_systems(
+                OnEnter(AppState::Intro),
+                return_to_attract.run_if(resource_exists::<crate::render::TileEntities>),
             );
     }
 }
@@ -232,6 +240,14 @@ fn restart_demo_if_fallen(world: &mut World, mut state: Local<(bool, f32)>) {
     }
     *state = (false, 0.0);
     info!("intro governor: the demo colony fell — restarting the attract mode");
+    rebuild_demo_world(world);
+}
+
+/// Tear down the current world and spawn a fresh demo colony for the attract
+/// mode, resetting the governor and camera and winding the clock back up to
+/// intro speed. The title overlay is left untouched (it persists across demo
+/// restarts within Intro); callers re-entering Intro respawn it themselves.
+fn rebuild_demo_world(world: &mut World) {
     reset_world(world);
     let _ = world.run_system_cached(crate::render::spawn_terrain);
     let _ = world.run_system_cached(crate::sim::trees::scatter_initial_trees);
@@ -244,6 +260,15 @@ fn restart_demo_if_fallen(world: &mut World, mut state: Local<(bool, f32)>) {
             .resource_mut::<Time<Virtual>>()
             .set_relative_speed(5.0);
     }
+}
+
+/// Returning to the title from the pause menu: rebuild the demo world and
+/// bring the cinematic overlay back (it was despawned when the player first
+/// took command).
+fn return_to_attract(world: &mut World) {
+    info!(target: "player", "returning to the attract mode");
+    rebuild_demo_world(world);
+    let _ = world.run_system_cached(spawn_overlay);
 }
 
 // ---------------------------------------------------------------------------

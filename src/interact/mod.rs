@@ -42,10 +42,7 @@ impl Plugin for InteractPlugin {
             .init_resource::<Selected>()
             .init_resource::<Notice>()
             .add_systems(Startup, spawn_ghost)
-            .add_systems(
-                Update,
-                (cancel_tool, expire_notice).run_if(in_state(AppState::Playing)),
-            )
+            .add_systems(Update, expire_notice.run_if(in_state(AppState::Playing)))
             .add_observer(track_hover)
             .add_observer(handle_click);
     }
@@ -55,17 +52,6 @@ fn expire_notice(time: Res<Time<Real>>, mut notice: ResMut<Notice>) {
     if notice.message.is_some() && time.elapsed_secs() > notice.expires {
         notice.bypass_change_detection().message = None;
         notice.set_changed();
-    }
-}
-
-fn cancel_tool(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut tool: ResMut<Tool>,
-    mut selected: ResMut<Selected>,
-) {
-    if keys.just_pressed(KeyCode::Escape) {
-        *tool = Tool::Select;
-        selected.0 = None;
     }
 }
 
