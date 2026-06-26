@@ -504,7 +504,10 @@ where
     }
 
     fn describe(&self) -> String {
-        format!("projected value of nearest ancestor with {}", short_name::<T>())
+        format!(
+            "projected value of nearest ancestor with {}",
+            short_name::<T>()
+        )
     }
 
     fn watched_type(&self) -> Option<TypeId> {

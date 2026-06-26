@@ -1158,7 +1158,10 @@ fn ancestor_dep_reads_nearest_provider_and_wakes_on_value() {
     let mut app = app();
     let provider = app.world_mut().spawn(Value(10)).id();
     let middle = app.world_mut().spawn(ChildOf(provider)).id();
-    let leaf = app.world_mut().spawn((ChildOf(middle), ancestor_reactor())).id();
+    let leaf = app
+        .world_mut()
+        .spawn((ChildOf(middle), ancestor_reactor()))
+        .id();
 
     app.update();
     app.update();
@@ -1186,7 +1189,10 @@ fn ancestor_dep_wakes_on_reparent_to_a_new_provider() {
     let mut app = app();
     let prov_a = app.world_mut().spawn(Value(1)).id();
     let prov_b = app.world_mut().spawn(Value(2)).id();
-    let leaf = app.world_mut().spawn((ChildOf(prov_a), ancestor_reactor())).id();
+    let leaf = app
+        .world_mut()
+        .spawn((ChildOf(prov_a), ancestor_reactor()))
+        .id();
 
     app.update();
     app.update();
@@ -1207,7 +1213,10 @@ fn ancestor_dep_wakes_when_a_nearer_provider_appears() {
     let mut app = app();
     let provider = app.world_mut().spawn(Value(10)).id();
     let middle = app.world_mut().spawn(ChildOf(provider)).id();
-    let leaf = app.world_mut().spawn((ChildOf(middle), ancestor_reactor())).id();
+    let leaf = app
+        .world_mut()
+        .spawn((ChildOf(middle), ancestor_reactor()))
+        .id();
 
     app.update();
     app.update();

@@ -88,8 +88,8 @@ use bevy::prelude::*;
 use bevy::scene::SpawnSceneError;
 
 pub use async_resource::{AsyncSlot, AsyncValue, AsyncView, reactive_async};
-pub use dep::{Dep, WorldAncestorExt};
 use dep::DepState;
+pub use dep::{Dep, WorldAncestorExt};
 
 pub struct ReactiveBsnPlugin;
 
