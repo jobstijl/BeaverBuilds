@@ -11,8 +11,10 @@ use std::any::{TypeId, type_name};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use bevy::asset::{Asset, AssetEvent, AssetId};
 use bevy::ecs::change_detection::{MAX_CHANGE_AGE, Tick};
 use bevy::ecs::entity::EntityHashSet;
+use bevy::ecs::message::{Message, MessageCursor, Messages};
 use bevy::ecs::query::QueryFilter;
 use bevy::ecs::relationship::RelationshipTarget;
 use bevy::prelude::*;
@@ -578,6 +580,48 @@ impl<R: Resource> DepSpec for ResourcePresenceDep<R> {
 }
 
 // ---------------------------------------------------------------------------
+// Message-buffer dependencies (plain messages and per-asset events)
+//
+// Message buffers have no change ticks, but their write heads are monotone:
+// a shared per-type stamp (the buffer analog of `SharedScans`) reads each
+// buffer once per runner tick and records the tick at which new messages
+// last arrived. Deps compare that stamp against their fragment's `last_run`
+// exactly like scan stamps — idempotent across convergence passes, so no
+// per-dep cursor consumption can double-fire or under-fire.
+// ---------------------------------------------------------------------------
+
+/// Reacts when one or more `E` messages were written since the last check.
+/// Edge-triggered: one wake per burst, however many messages arrived.
+struct MessageDep<E>(std::marker::PhantomData<fn() -> E>);
+
+impl<E: Message> DepSpec for MessageDep<E> {
+    fn check(&self, cx: &mut DepCx, _state: &mut DepState) -> bool {
+        let stamp = cx.scans.message_stamp::<E>(cx.world, cx.this_run);
+        stamp.is_newer_than(cx.last_run, cx.this_run)
+    }
+
+    fn describe(&self) -> String {
+        format!("messages of {}", short_name::<E>())
+    }
+}
+
+/// Reacts to [`AssetEvent`]s concerning one specific asset id.
+struct AssetDep<A: Asset> {
+    id: AssetId<A>,
+}
+
+impl<A: Asset> DepSpec for AssetDep<A> {
+    fn check(&self, cx: &mut DepCx, _state: &mut DepState) -> bool {
+        let stamp = cx.scans.asset_stamp::<A>(cx.world, cx.this_run, self.id);
+        stamp.is_newer_than(cx.last_run, cx.this_run)
+    }
+
+    fn describe(&self) -> String {
+        format!("asset {} ({:?})", short_name::<A>(), self.id)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------
 
@@ -748,6 +792,30 @@ impl Dep {
         Dep(Arc::new(ResourcePresenceDep::<R>(std::marker::PhantomData)))
     }
 
+    /// React when one or more `E` messages were written since the last check.
+    /// Edge-triggered: one wake per burst however many messages arrived, and
+    /// nothing carries the messages into the render — read *state* there, not
+    /// the buffer. When the message isn't itself the whole signal, prefer a
+    /// plain system that consumes it and writes state reactors watch; this
+    /// dep is for messages that *are* the state change (a "settings changed"
+    /// ping, a save completed). Messages written after the reactor runner in
+    /// the schedule wake it next frame. The underlying buffer read is shared:
+    /// any number of watchers of `E` cost one read per frame, total.
+    pub fn message<E: Message>() -> Dep {
+        Dep(Arc::new(MessageDep::<E>(std::marker::PhantomData)))
+    }
+
+    /// React to [`AssetEvent`]s concerning one specific asset — added,
+    /// modified (hot reloads included), removed, unused — the per-handle
+    /// refinement of `Dep::resource::<Assets<A>>()`, which wakes on *any*
+    /// asset of the type. Takes an [`AssetId`] (a `&Handle<A>` converts), so
+    /// the dependency never keeps the asset alive. The `AssetEvent<A>` sweep
+    /// is shared: any number of per-asset watchers cost one buffer read per
+    /// frame, total.
+    pub fn asset<A: Asset>(id: impl Into<AssetId<A>>) -> Dep {
+        Dep(Arc::new(AssetDep::<A> { id: id.into() }))
+    }
+
     /// React when *any* entity's `T` changes, or entities with `T` are added
     /// or removed. The underlying scan is shared: any number of reactors with
     /// this dependency cost one scan of `T` per frame, total.
@@ -797,10 +865,15 @@ impl Dep {
 /// One persistent scan per watched component type (+ filter), shared by all
 /// reactors. Each runner pass, the first reactor to ask about a type triggers
 /// one walk of that type's entities; everyone else reuses the resulting
-/// dirty stamp.
+/// dirty stamp. Message-buffer stamps (plain messages, per-asset events)
+/// live here too, under the same once-per-tick refresh discipline.
 #[derive(Default)]
 pub(crate) struct SharedScans {
     map: HashMap<TypeId, Box<dyn AnyScan + Send + Sync>>,
+    /// Keyed by the concrete stamp type (`MessageStamp<E>` / `AssetStamp<A>`),
+    /// so a plain `Dep::message::<AssetEvent<A>>()` watcher can coexist with
+    /// `Dep::asset::<A>` watchers without colliding.
+    messages: HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
 }
 
 impl SharedScans {
@@ -815,6 +888,113 @@ impl SharedScans {
             .or_insert_with(|| Box::new(TypeScan::<T, F>::new(this_run)));
         scan.refresh(world, this_run);
         scan.dirty_stamp()
+    }
+
+    fn message_stamp<E: Message>(&mut self, world: &World, this_run: Tick) -> Tick {
+        let stamp: &mut MessageStamp<E> = self
+            .messages
+            .entry(TypeId::of::<MessageStamp<E>>())
+            .or_insert_with(|| Box::new(MessageStamp::<E>::new(this_run)))
+            .downcast_mut()
+            .expect("message stamps are keyed by their concrete type");
+        stamp.refresh(world, this_run);
+        stamp.dirty_stamp
+    }
+
+    fn asset_stamp<A: Asset>(&mut self, world: &World, this_run: Tick, id: AssetId<A>) -> Tick {
+        let stamp: &mut AssetStamp<A> = self
+            .messages
+            .entry(TypeId::of::<AssetStamp<A>>())
+            .or_insert_with(|| Box::new(AssetStamp::<A>::new(this_run)))
+            .downcast_mut()
+            .expect("asset stamps are keyed by their concrete type");
+        stamp.refresh(world, this_run);
+        stamp.stamp(id)
+    }
+}
+
+/// Shared per-message-type stamp: the buffer's monotone write head, read once
+/// per runner tick and translated into a synthetic change tick.
+struct MessageStamp<E: Message> {
+    cursor: MessageCursor<E>,
+    scanned_at: Option<Tick>,
+    dirty_stamp: Tick,
+}
+
+impl<E: Message> MessageStamp<E> {
+    fn new(this_run: Tick) -> Self {
+        Self {
+            cursor: MessageCursor::default(),
+            scanned_at: None,
+            // New watchers (last_run = 0) should fire once on creation; any
+            // backlog buffered before the first refresh folds into this same
+            // stamp rather than re-firing later.
+            dirty_stamp: this_run,
+        }
+    }
+
+    fn refresh(&mut self, world: &World, this_run: Tick) {
+        if self.scanned_at == Some(this_run) {
+            return;
+        }
+        self.scanned_at = Some(this_run);
+        clamp_tick(&mut self.dirty_stamp, this_run);
+        let Some(messages) = world.get_resource::<Messages<E>>() else {
+            return;
+        };
+        if self.cursor.len(messages) > 0 {
+            self.cursor.clear(messages);
+            self.dirty_stamp = this_run;
+        }
+    }
+}
+
+/// [`MessageStamp`] over `AssetEvent<A>`, resolved per asset id: one shared
+/// buffer read per runner tick records which assets were touched and when.
+/// The map holds one tick per touched asset — bounded by the collection —
+/// and entries past `MAX_CHANGE_AGE` are pruned (an expired stamp and a
+/// pruned one read the same: "not newer than any live `last_run`").
+struct AssetStamp<A: Asset> {
+    cursor: MessageCursor<AssetEvent<A>>,
+    scanned_at: Option<Tick>,
+    /// Fire-once stamp for ids no event has touched yet.
+    created: Tick,
+    touched: HashMap<AssetId<A>, Tick>,
+}
+
+impl<A: Asset> AssetStamp<A> {
+    fn new(this_run: Tick) -> Self {
+        Self {
+            cursor: MessageCursor::default(),
+            scanned_at: None,
+            created: this_run,
+            touched: HashMap::new(),
+        }
+    }
+
+    fn refresh(&mut self, world: &World, this_run: Tick) {
+        if self.scanned_at == Some(this_run) {
+            return;
+        }
+        self.scanned_at = Some(this_run);
+        clamp_tick(&mut self.created, this_run);
+        self.touched
+            .retain(|_, tick| this_run.get().wrapping_sub(tick.get()) <= MAX_CHANGE_AGE);
+        let Some(messages) = world.get_resource::<Messages<AssetEvent<A>>>() else {
+            return;
+        };
+        for event in self.cursor.read(messages) {
+            let (AssetEvent::Added { id }
+            | AssetEvent::Modified { id }
+            | AssetEvent::Removed { id }
+            | AssetEvent::Unused { id }
+            | AssetEvent::LoadedWithDependencies { id }) = event;
+            self.touched.insert(*id, this_run);
+        }
+    }
+
+    fn stamp(&self, id: AssetId<A>) -> Tick {
+        self.touched.get(&id).copied().unwrap_or(self.created)
     }
 }
 

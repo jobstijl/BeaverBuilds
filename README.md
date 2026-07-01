@@ -188,7 +188,7 @@ tiles instead of "the whole map changed every tick".
 
 ## Tests
 
-`cargo test --workspace` — the reactive crate carries 41 behavioral tests; the game's
+`cargo test --workspace` — the reactive crate carries 43 behavioral tests; the game's
 simulation has its own suite (pathfinding routes around walls and prefers stone paths,
 the water step conserves mass, **dams must improve drought retention** — a gameplay
 invariant that once failed and exposed a real balance bug — placement rules, droughts

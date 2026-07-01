@@ -78,11 +78,11 @@ Three primitives, separated by what they do to *structure* (because
 `apply_scene` re-spawns `Children [..]` on every application, structural
 updates must be explicit — we consider this a feature, not a bug):
 
-| primitive | structure | use |
-|---|---|---|
-| `reactive` / `Reactor::patch` | none (childless fragment) | text, colors, transforms, materials |
-| `reactive_rebuild` / `Reactor::rebuild` | replaces its subtree | conditional panels, mode switches |
-| `reactive_list` / `ReactorList` | keyed membership + order only | collections; item content self-updates via embedded `reactive` |
+| primitive                               | structure                     | use                                                            |
+| -----------------------------------------| -------------------------------| ----------------------------------------------------------------|
+| `reactive` / `Reactor::patch`           | none (childless fragment)     | text, colors, transforms, materials                            |
+| `reactive_rebuild` / `Reactor::rebuild` | replaces its subtree          | conditional panels, mode switches                              |
+| `reactive_list` / `ReactorList`         | keyed membership + order only | collections; item content self-updates via embedded `reactive` |
 
 The list never re-applies surviving items — the React-keys insight without
 the reconciliation: vanished keys despawn, new keys spawn, survivors are
@@ -113,6 +113,19 @@ renderer on a child, because a child must not write its parent.
 | `Dep::ancestor::<T>()` | `T` on the nearest `ChildOf` ancestor carrying it — a Context analog (provide = insert `T` on a container; read via `world.nearest_ancestor`) |
 | `Dep::components::<T>()` | `T` anywhere, incl. population changes |
 | `Dep::related::<S>(e)` / `Dep::related_components::<S, T>(e)` | relation set / components across a relation |
+| `Dep::message::<E>()` | ≥1 new `E` message since the last check — edge-triggered, one wake per burst (the render reads state, not the buffer) |
+| `Dep::asset::<A>(id)` | `AssetEvent`s for one asset id (reload/modify/remove) — per-handle granularity; takes an `AssetId`, never keeps the asset alive |
+
+The last two ride message buffers, which have no change ticks. Rather than
+giving each dep a consuming cursor — which would break the invariant that
+checks are idempotent across convergence passes — each buffer's monotone
+write head is translated into a *synthetic* per-type stamp, read once per
+frame and shared by every watcher (the buffer analog of the shared scans
+below; the per-asset variant additionally records which ids the new events
+touched). `Dep::message` is deliberately edge-triggered and carries nothing
+into the render: when the message isn't itself the whole signal, the right
+pattern remains a plain system that consumes it and writes state reactors
+watch.
 
 **Why declared, not tracked?** Cart's sketch leans toward observer-style
 fine granularity; every prior implicit-tracking implementation in Rust
@@ -224,7 +237,7 @@ is no push channel for mutations, and we argue below there shouldn't be.
   (every few seconds, or when a dam appears) and the retention percentage
   renders reactively. Continuous motion and the live water cellular
   automaton remain plain systems — the boundary held up well in practice.
-- **41 behavioral tests** (headless) pin the semantics: exactly one run per
+- **43 behavioral tests** (headless) pin the semantics: exactly one run per
   change (no spurious wakes), in-place merging preserves foreign components,
   presence ignores mutations, population changes wake whole-world deps,
   rebuild despawns old subtrees, list survivors keep their entities, chains
@@ -249,8 +262,11 @@ is no push channel for mutations, and we argue below there shouldn't be.
   when a nearer provider appears (the Context analog); `entity_value` and
   `parent_value` wake on a single projected field of a passed-in / parent
   state component; `ancestor_value` skips projecting while its provider is
-  quiet yet still re-projects when the provider *swaps* under old ticks; and
-  `resource_presence` ignores resource mutation.
+  quiet yet still re-projects when the provider *swaps* under old ticks;
+  `resource_presence` ignores resource mutation; a burst of messages is one
+  `Dep::message` wake and already-seen buffered messages never re-wake; and
+  a per-asset dep ignores sibling assets' events and wakes exactly once on
+  its own asset's `Modified`.
 
 ## What this validates from #14437 — and what it challenges
 
@@ -368,14 +384,13 @@ path. We'd encourage upstream reactivity to stay pull-based.
   read-only work; worth it past ~50k reactors, not before.
 - Multi-schedule runners (e.g. a second pass post-`PostUpdate`) — trivially
   possible, scheduling policy unclear.
-- `Dep` granularity for assets (`Dep::resource::<Assets<T>>()` works but is
-  collection-wide; a per-handle `Dep::asset::<T>(handle)` would watch
-  `AssetEvent<T>` so one reload re-renders one consumer).
-- A message/event dep (`Dep::message::<E>()`, wake when an `E` was sent this
-  frame). Both this and the per-handle asset dep ride event buffers rather than
-  change ticks, so they're a slightly different `DepSpec` shape; the message
-  one's frame-scoped semantics (re-render while the message is buffered) want
-  pinning down before it lands.
+- ~~A per-handle asset dep and a message dep~~ — resolved: both landed as
+  synthetic-stamp deps over the message buffers (see the dependency table).
+  The open design question they raised — frame-scoped buffer semantics —
+  was answered by *rejecting* level-triggered "re-render while buffered" in
+  favor of edge-triggered one-wake-per-burst, precisely because the buffers'
+  double-buffered lifetime is an implementation detail no render should
+  observe.
 
 ## Appendix: prior-art positioning
 

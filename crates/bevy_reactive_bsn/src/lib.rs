@@ -9,10 +9,12 @@
 //!   a reactor.
 //! - **Declared dependencies** ([`Dep::resource`], [`Dep::this`],
 //!   [`Dep::entity`], [`Dep::ancestor`], [`Dep::components`],
-//!   [`Dep::related_components`]) —
+//!   [`Dep::related_components`], [`Dep::message`], [`Dep::asset`]) —
 //!   debuggable, no hook-ordering footguns, 1:1 onto change detection.
 //!   Whole-world component dependencies are checked through one *shared scan
-//!   per type per frame*, however many reactors watch the type.
+//!   per type per frame*, however many reactors watch the type; message and
+//!   per-asset dependencies share one buffer read per type per frame the
+//!   same way.
 //! - **Incremental updates via BSN patches.** A dirty reactor re-runs its
 //!   scene function and re-applies the result onto its own entity; component
 //!   patches merge in place, so focus/hover/animation state survives.

@@ -87,6 +87,8 @@ attempt (bevy_reactor/quill, bevy_cobweb, kayak_ui, belly, jonmo/haalka):
 | `Dep::parent::<T>()`                                                 | `T` on the entity's `ChildOf` parent — re-parenting wakes it too                                                                       |                                                                     |                                                                                                                                |
 | `Dep::ancestor::<T>()`                                               | `T` on the nearest `ChildOf` ancestor carrying it — the ECS analog of React Context; read it back with `world.nearest_ancestor::<T>()` |                                                                     |                                                                                                                                |
 | `Dep::presence::<T>(e)`, `presence_this`, `resource_presence::<R>()` | insert/remove only, mutations ignored                                                                                                  |                                                                     |                                                                                                                                |
+| `Dep::message::<E>()`                                                | one or more `E` messages written since the last check — edge-triggered, one wake per burst (read *state* in the render, not the buffer) |                                                                     |                                                                                                                                |
+| `Dep::asset::<A>(id)`                                                | `AssetEvent`s for one asset id (add/modify/remove — hot reloads included); takes an `AssetId`, so it never keeps the asset alive        |                                                                     |                                                                                                                                |
 | `Dep::components::<T>()` (`_filtered`)                               | `T` on *any* entity, incl. population changes                                                                                          |                                                                     |                                                                                                                                |
 | `Dep::related::<S>(e)`, `related_this`                               | the relation set `S` (e.g. `Children`) of `e`                                                                                          |                                                                     |                                                                                                                                |
 | `Dep::related_components::<S, T>(e)`, `…_this`                       | `T` on any entity related to `e` via `S`                                                                                               |                                                                     |                                                                                                                                |
@@ -220,13 +222,16 @@ is the natural batch boundary anyway.
   descendants (checked in debug builds; see Scheduling above).
 - Runs in `Update` by default; state written later (e.g. `PostUpdate`)
   is picked up next frame.
-- **Two dep sources still want adding**, both riding a *different* mechanism
-  than change ticks (so they're a slightly different `DepSpec` shape):
-  - a **per-handle asset dep** `Dep::asset::<T>(handle)` — today
-    `Dep::resource::<Assets<T>>()` works but is collection-wide; a per-handle
-    dep would watch `AssetEvent<T>` so one reload re-renders one consumer;
-  - a **message/event dep** `Dep::message::<E>()` — wake when an `E` was sent
-    this frame (frame-scoped buffer semantics need pinning down before it lands).
+- `Dep::message` and `Dep::asset` ride message buffers, which have no change
+  ticks; the layer translates each buffer's monotone write head into a
+  *synthetic* per-type stamp (read once per frame, shared by all watchers —
+  the buffer analog of the shared scans), which keeps checks idempotent
+  across convergence passes. Consequences to know about: `Dep::message` is
+  deliberately **edge-triggered** (one wake per burst, and the render reads
+  *state*, not the buffer — if the message isn't itself the signal, consume
+  it in a plain system that writes state instead), and messages written
+  after the runner (e.g. asset events, which flush in `Last`) wake next
+  frame.
 
 ## License
 

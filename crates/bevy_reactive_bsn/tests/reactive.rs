@@ -1508,3 +1508,97 @@ fn ancestor_value_projection_is_tick_gated_while_the_provider_is_quiet() {
         "a swapped provider with old ticks still re-projects and wakes"
     );
 }
+
+// ---------------------------------------------------------------------------
+// message and per-asset dependencies
+// ---------------------------------------------------------------------------
+
+#[derive(Message)]
+struct Ping;
+
+#[test]
+fn message_dep_wakes_once_per_burst_and_stays_quiet_between() {
+    let mut app = app();
+    app.add_message::<Ping>();
+    let (runs, run_count) = counter();
+    app.world_mut().spawn(Reactor::patch(
+        [Dep::message::<Ping>()],
+        move |_: &World, _| {
+            runs.fetch_add(1, Ordering::SeqCst);
+            bsn! { Label(0) }
+        },
+    ));
+    app.update();
+    assert_eq!(run_count(), 1, "new watchers fire once");
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(run_count(), 1, "no messages, no wakes");
+
+    // A burst of messages is one wake, not three.
+    app.world_mut().write_message(Ping);
+    app.world_mut().write_message(Ping);
+    app.world_mut().write_message(Ping);
+    app.update();
+    assert_eq!(run_count(), 2, "a burst of messages is a single wake");
+
+    // The double-buffered messages linger for another frame; already-seen
+    // messages must not re-wake.
+    app.update();
+    app.update();
+    assert_eq!(run_count(), 2, "buffered-but-seen messages do not re-wake");
+}
+
+#[derive(Asset, TypePath)]
+struct Blob;
+
+#[test]
+fn asset_dep_wakes_only_for_its_own_asset() {
+    let mut app = app();
+    app.init_asset::<Blob>();
+    let watched = app.world_mut().resource_mut::<Assets<Blob>>().add(Blob);
+    let other = app.world_mut().resource_mut::<Assets<Blob>>().add(Blob);
+    let (runs, run_count) = counter();
+    app.world_mut().spawn(Reactor::patch(
+        [Dep::asset(&watched)],
+        move |_: &World, _| {
+            runs.fetch_add(1, Ordering::SeqCst);
+            bsn! { Label(0) }
+        },
+    ));
+    // Settle: the `Added` events flush through the asset systems a frame
+    // after the inserts above.
+    for _ in 0..3 {
+        app.update();
+    }
+    let settled = run_count();
+
+    // Mutating a *different* asset of the same type must not wake.
+    *app.world_mut()
+        .resource_mut::<Assets<Blob>>()
+        .get_mut(&other)
+        .unwrap() = Blob;
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(
+        run_count(),
+        settled,
+        "another asset's events do not wake a per-asset watcher"
+    );
+
+    // Mutating the watched asset does (writing through the `AssetMut`
+    // guard queues `Modified` on drop).
+    *app.world_mut()
+        .resource_mut::<Assets<Blob>>()
+        .get_mut(&watched)
+        .unwrap() = Blob;
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(
+        run_count(),
+        settled + 1,
+        "the watched asset's Modified event wakes exactly once"
+    );
+}
