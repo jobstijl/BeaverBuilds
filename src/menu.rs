@@ -33,9 +33,17 @@ impl Plugin for MenuPlugin {
 /// player may have already paused with Space before opening the menu, and
 /// closing it shouldn't silently un-pause their game.
 #[derive(Resource, Default)]
-struct MenuState {
-    open: bool,
+pub struct MenuState {
+    pub open: bool,
     was_paused: bool,
+}
+
+/// Run condition for gameplay key handling elsewhere (the speed hotkeys):
+/// keys must not pierce the menu — Space/1/2/3 would unpause the colony
+/// behind a screen that says PAUSED. `Option` so headless sim tests that
+/// don't add `MenuPlugin` keep their hotkeys.
+pub fn menu_closed(menu: Option<Res<MenuState>>) -> bool {
+    menu.is_none_or(|m| !m.open)
 }
 
 /// Root of the spawned menu scene; despawned when the menu closes.

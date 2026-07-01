@@ -102,7 +102,11 @@ impl Plugin for SimPlugin {
         ))
         .add_systems(
             Update,
-            (game_speed_hotkeys, check_colony_fell).run_if(in_state(crate::AppState::Playing)),
+            (
+                game_speed_hotkeys.run_if(crate::menu::menu_closed),
+                check_colony_fell,
+            )
+                .run_if(in_state(crate::AppState::Playing)),
         );
     }
 }
@@ -285,6 +289,41 @@ mod tests {
             *app.world().resource::<State<crate::AppState>>().get(),
             crate::AppState::GameOver,
             "losing every beaver must end the game"
+        );
+    }
+
+    /// Speed hotkeys must not pierce the pause menu: Space/1/2/3 while the
+    /// menu is open would unpause the colony behind a screen saying PAUSED.
+    #[test]
+    fn speed_hotkeys_do_not_pierce_the_pause_menu() {
+        let mut app = sim_app();
+        app.init_resource::<crate::menu::MenuState>();
+        app.update();
+
+        // The menu is open and has paused the clock; the player presses "2".
+        app.world_mut().resource_mut::<Time<Virtual>>().pause();
+        app.world_mut()
+            .resource_mut::<crate::menu::MenuState>()
+            .open = true;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Digit2);
+        app.update();
+        assert!(
+            app.world().resource::<Time<Virtual>>().is_paused(),
+            "a speed hotkey pressed while the menu is open must not unpause"
+        );
+
+        // With the menu closed the same key works again. (No InputPlugin in
+        // this headless app, so `just_pressed` persists until cleared — the
+        // gate above is the run condition, not input consumption.)
+        app.world_mut()
+            .resource_mut::<crate::menu::MenuState>()
+            .open = false;
+        app.update();
+        assert!(
+            !app.world().resource::<Time<Virtual>>().is_paused(),
+            "with the menu closed, speed hotkeys apply"
         );
     }
 
