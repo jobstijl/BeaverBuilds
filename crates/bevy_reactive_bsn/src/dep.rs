@@ -433,6 +433,12 @@ fn nearest_ancestor_entity<T: Component>(world: &World, entity: Entity) -> Optio
         }
         cur = world.get::<ChildOf>(cur)?.parent();
     }
+    bevy::log::warn_once!(
+        "ancestor walk for {} from {} gave up after {} levels — is the ChildOf hierarchy cyclic?",
+        short_name::<T>(),
+        entity,
+        MAX_ANCESTOR_DEPTH
+    );
     None
 }
 
@@ -472,10 +478,11 @@ impl<T: Component> DepSpec for AncestorDep<T> {
     }
 }
 
-/// [`AncestorDep`] with a value projection. Unlike the resource/this value deps
-/// this is *not* tick-gated — provider identity can change with no tick
-/// advancing — so it re-walks and re-projects each check and leans on the
-/// `PartialEq` cache to suppress spurious wakes. Ancestors are shallow.
+/// [`AncestorDep`] with a value projection. The ancestor *walk* re-runs each
+/// check — provider identity has no tick to gate on — but the projection is
+/// tick-gated against the resolved provider (cached alongside the value): a
+/// quiet same-provider check costs the walk plus one tick compare, and the
+/// projection + `PartialEq` run only when the provider or its `T` changed.
 struct AncestorValueDep<T, V, F> {
     project: F,
     _marker: std::marker::PhantomData<fn() -> (T, V)>,
@@ -488,19 +495,39 @@ where
     F: Fn(&T) -> V + Send + Sync,
 {
     fn check(&self, cx: &mut DepCx, state: &mut DepState) -> bool {
-        let value = nearest_ancestor_entity::<T>(cx.world, cx.this)
-            .and_then(|e| cx.world.get::<T>(e))
-            .map(|t| (self.project)(t));
-        let Some(value) = value else {
+        clamp_tick(&mut state.seen, cx.this_run);
+        let Some(provider) = nearest_ancestor_entity::<T>(cx.world, cx.this) else {
+            // Provider vanished: dirty once, then quiet.
             return state.cache.take().is_some();
         };
-        match state.cache.as_ref().and_then(|c| c.downcast_ref::<V>()) {
-            Some(old) if *old == value => false,
-            _ => {
-                state.cache = Some(Box::new(value));
-                true
-            }
+        let same_provider = state
+            .cache
+            .as_ref()
+            .and_then(|c| c.downcast_ref::<(Entity, V)>())
+            .is_some_and(|(prev, _)| *prev == provider);
+        let ticks = cx
+            .world
+            .get_entity(provider)
+            .ok()
+            .and_then(|e| e.get_change_ticks::<T>());
+        // A swapped provider (re-parent, nearer/removed provider) may hold a
+        // different value under an old tick, so only an *unchanged* provider
+        // gets the tick gate.
+        if same_provider && ticks.is_some_and(|t| !t.is_changed(state.seen, cx.this_run)) {
+            return false;
         }
+        state.seen = cx.this_run;
+        let value = (self.project)(cx.world.get::<T>(provider).unwrap());
+        let changed = match state
+            .cache
+            .as_ref()
+            .and_then(|c| c.downcast_ref::<(Entity, V)>())
+        {
+            Some((_, old)) => *old != value,
+            None => true,
+        };
+        state.cache = Some(Box::new((provider, value)));
+        changed
     }
 
     fn describe(&self) -> String {
@@ -679,10 +706,11 @@ impl Dep {
     }
 
     /// [`Dep::ancestor`] with a value projection: wakes only when a *projection*
-    /// of the nearest ancestor's `T` changes value. Unlike
-    /// [`Dep::resource_value`]/[`Dep::this_value`] this is not tick-gated
-    /// (provider identity can change with no tick advancing), so it re-projects
-    /// each check; ancestors are shallow, so this stays cheap.
+    /// of the nearest ancestor's `T` changes value. The ancestor walk re-runs
+    /// each check (provider identity can change with no tick advancing;
+    /// ancestors are shallow, so this stays cheap), but the projection itself
+    /// is tick-gated against the resolved provider, like
+    /// [`Dep::resource_value`]/[`Dep::this_value`].
     pub fn ancestor_value<T, V>(project: impl Fn(&T) -> V + Send + Sync + 'static) -> Dep
     where
         T: Component,

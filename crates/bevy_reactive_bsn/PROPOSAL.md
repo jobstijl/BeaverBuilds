@@ -224,7 +224,7 @@ is no push channel for mutations, and we argue below there shouldn't be.
   (every few seconds, or when a dam appears) and the retention percentage
   renders reactively. Continuous motion and the live water cellular
   automaton remain plain systems — the boundary held up well in practice.
-- **40 behavioral tests** (headless) pin the semantics: exactly one run per
+- **41 behavioral tests** (headless) pin the semantics: exactly one run per
   change (no spurious wakes), in-place merging preserves foreign components,
   presence ignores mutations, population changes wake whole-world deps,
   rebuild despawns old subtrees, list survivors keep their entities, chains
@@ -248,7 +248,9 @@ is no push channel for mutations, and we argue below there shouldn't be.
   `Dep::ancestor` reads the nearest provider, re-resolves on re-parenting and
   when a nearer provider appears (the Context analog); `entity_value` and
   `parent_value` wake on a single projected field of a passed-in / parent
-  state component; and `resource_presence` ignores resource mutation.
+  state component; `ancestor_value` skips projecting while its provider is
+  quiet yet still re-projects when the provider *swaps* under old ticks; and
+  `resource_presence` ignores resource mutation.
 
 ## What this validates from #14437 — and what it challenges
 

@@ -1436,3 +1436,75 @@ fn parent_value_reprojects_on_pure_reparent() {
         "re-parenting re-projects parent_value against the new parent"
     );
 }
+
+#[test]
+fn ancestor_value_projection_is_tick_gated_while_the_provider_is_quiet() {
+    let mut app = app();
+    let projections = Arc::new(AtomicUsize::new(0));
+    let counted = projections.clone();
+    let prov_a = app.world_mut().spawn(WidgetState { a: 1, b: 0 }).id();
+    let prov_b = app.world_mut().spawn(WidgetState { a: 2, b: 0 }).id();
+    let middle = app.world_mut().spawn(ChildOf(prov_a)).id();
+    let leaf = app
+        .world_mut()
+        .spawn((
+            ChildOf(middle),
+            Reactor::patch(
+                [Dep::ancestor_value(move |s: &WidgetState| {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    s.a
+                })],
+                |world: &World, e| {
+                    let a = world
+                        .nearest_ancestor::<WidgetState>(e)
+                        .map(|s| s.a)
+                        .unwrap_or(0);
+                    bsn! { Label({ a }) }
+                },
+            ),
+        ))
+        .id();
+    app.update();
+    let after_first = projections.load(Ordering::SeqCst);
+
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(
+        projections.load(Ordering::SeqCst),
+        after_first,
+        "a quiet provider must not re-run the projection each frame"
+    );
+
+    // A provider tick re-projects (sibling field: projects, compares, no wake).
+    app.world_mut()
+        .entity_mut(prov_a)
+        .get_mut::<WidgetState>()
+        .unwrap()
+        .b = 7;
+    app.update();
+    let after_tick = projections.load(Ordering::SeqCst);
+    assert!(
+        after_tick > after_first,
+        "a provider tick must re-run the projection"
+    );
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(
+        projections.load(Ordering::SeqCst),
+        after_tick,
+        "after re-projecting, a quiet provider goes back to tick compares"
+    );
+
+    // The gate must not swallow a provider *swap*: prov_b's `WidgetState`
+    // ticks are old by now, but re-parenting makes it the nearest provider,
+    // so the value must re-project and the reactor must wake.
+    app.world_mut().entity_mut(leaf).insert(ChildOf(prov_b));
+    app.update();
+    assert_eq!(
+        app.world().get::<Label>(leaf),
+        Some(&Label(2)),
+        "a swapped provider with old ticks still re-projects and wakes"
+    );
+}
