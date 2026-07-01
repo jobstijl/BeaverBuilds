@@ -204,11 +204,13 @@ construction, pathfinding, chopping and logs to all have happened).
 
 | scenario | ms/frame | per unit |
 |---|---|---|
-| 10k patch reactors (`Dep::this`), all idle | 0.42 | 42 ns/reactor |
-| 10k patch reactors, 100 dirty/frame | 0.50 | ~0.8 µs/update |
-| 10k patch reactors, all dirty every frame | 3.2 | ~280 ns/apply |
-| 1k `Dep::components` watchers over 10k entities, idle | 0.11 | one shared scan |
-| 10k value-projection deps, noisy resource, stable value | 0.48 | ≈ idle floor |
+| 10k patch reactors (`Dep::this`), all idle | 0.44 | 44 ns/reactor |
+| 10k patch reactors, 100 dirty/frame | 0.53 | ~1 µs/update |
+| 10k patch reactors, all dirty every frame | 3.4 | ~290 ns/apply |
+| 1k `Dep::components` watchers over 10k entities, idle | 0.10 | one shared scan |
+| 10k value-projection deps, noisy resource, stable value | 0.46 | ≈ idle floor |
+| 10k `Dep::message` watchers, quiet buffer | 0.49 | ≈ idle floor |
+| 10k `Dep::asset` watchers, sibling asset modified/frame | 0.74 | one shared sweep, no wakes |
 | baseline: plain `Changed<T>` system (10k, idle / all dirty) | 0.06 / 0.07 | ~6 ns/entity |
 
 Reading: idle dirty-checks cost ~42 ns/reactor (≈7× the raw ECS floor — the price of the

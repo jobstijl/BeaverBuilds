@@ -213,11 +213,13 @@ hardcoded exemption.
 
 | scenario | ms/frame | per unit |
 |---|---|---|
-| 10k patch reactors, idle | 0.42 | 42 ns/reactor |
-| 10k patch reactors, 100 dirty/frame | 0.50 | ~0.8 µs/update |
-| 10k patch reactors, all dirty | 3.2 | ~280 ns/apply |
-| 1k whole-world watchers over 10k entities, idle | 0.11 | one shared scan |
-| 10k value-projection deps, noisy resource, stable value | 0.48 | ≈ idle floor |
+| 10k patch reactors, idle | 0.44 | 44 ns/reactor |
+| 10k patch reactors, 100 dirty/frame | 0.53 | ~1 µs/update |
+| 10k patch reactors, all dirty | 3.4 | ~290 ns/apply |
+| 1k whole-world watchers over 10k entities, idle | 0.10 | one shared scan |
+| 10k value-projection deps, noisy resource, stable value | 0.46 | ≈ idle floor |
+| 10k message-dep watchers, quiet buffer | 0.49 | ≈ idle floor |
+| 10k per-asset watchers, sibling asset modified/frame | 0.74 | one shared sweep, no wakes |
 | baseline `Changed<T>` system, 10k entities | 0.06 | ~6 ns/entity |
 
 The idle check is ~7× the raw ECS floor; at realistic scales (a few

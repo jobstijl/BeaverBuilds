@@ -66,7 +66,22 @@ pub fn run_benchmarks() {
         n,
     );
 
-    // 6/7. Baseline: identical update work as a plain Changed<T> system.
+    // 6. Message deps: the buffer stays quiet; watchers pay one shared head
+    //    read per frame plus a stamp compare each.
+    let ms = bench_message_deps(n);
+    row("10k Dep::message watchers, quiet buffer, idle", ms, n);
+
+    // 7. Per-asset deps under sibling traffic: one *other* asset is modified
+    //    every frame, so the shared AssetEvent sweep runs and records the
+    //    touched id — and none of the watchers wake.
+    let ms = bench_asset_deps(n);
+    row(
+        "10k Dep::asset watchers, sibling asset modified/frame",
+        ms,
+        n,
+    );
+
+    // 8+. Baseline: identical update work as a plain Changed<T> system.
     let ms = bench_baseline(n, 0);
     row(
         "baseline: plain Changed<T> system, 10k entities, idle",
@@ -169,6 +184,67 @@ fn bench_value_projections(n: usize) -> f64 {
     for _ in 0..n {
         app.world_mut().spawn(Reactor::from_spec(spec.clone()));
     }
+    measure(&mut app)
+}
+
+#[derive(Message)]
+struct BenchPing;
+
+/// N reactors sharing a message dep over a buffer nothing writes to — the
+/// idle floor of the synthetic-stamp mechanism (one shared head read per
+/// frame, then a stamp compare per watcher).
+fn bench_message_deps(n: usize) -> f64 {
+    let mut app = base_app(0);
+    app.add_plugins(ReactiveBsnPlugin)
+        .add_message::<BenchPing>();
+    let spec = ReactorSpec::patch([Dep::message::<BenchPing>()], |_: &World, _: Entity| {
+        bsn! { Label(0) }
+    });
+    for _ in 0..n {
+        app.world_mut().spawn(Reactor::from_spec(spec.clone()));
+    }
+    measure(&mut app)
+}
+
+#[derive(Asset, TypePath)]
+struct BenchBlob;
+
+#[derive(Resource)]
+struct BlobHandles {
+    /// Kept alive so the watched asset never emits `Unused`.
+    #[expect(dead_code)]
+    watched: Handle<BenchBlob>,
+    sibling: Handle<BenchBlob>,
+}
+
+/// N reactors all watching one asset while a *different* asset of the same
+/// type is modified every frame: the shared `AssetEvent` sweep reads and
+/// records the sibling's event, and no watcher wakes.
+fn bench_asset_deps(n: usize) -> f64 {
+    let mut app = base_app(0);
+    app.add_plugins(ReactiveBsnPlugin).init_asset::<BenchBlob>();
+    let watched = app
+        .world_mut()
+        .resource_mut::<Assets<BenchBlob>>()
+        .add(BenchBlob);
+    let sibling = app
+        .world_mut()
+        .resource_mut::<Assets<BenchBlob>>()
+        .add(BenchBlob);
+    let spec = ReactorSpec::patch([Dep::asset(&watched)], |_: &World, _: Entity| {
+        bsn! { Label(0) }
+    });
+    for _ in 0..n {
+        app.world_mut().spawn(Reactor::from_spec(spec.clone()));
+    }
+    app.insert_resource(BlobHandles { watched, sibling });
+    app.add_systems(
+        Update,
+        (|handles: Res<BlobHandles>, mut assets: ResMut<Assets<BenchBlob>>| {
+            *assets.get_mut(&handles.sibling).unwrap() = BenchBlob;
+        })
+        .before(ReactSet),
+    );
     measure(&mut app)
 }
 
